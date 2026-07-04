@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, user-scalable=no, initial-scale=1, shrink-to-fit=no, minimum-scale=1, maximum-scale=1" />
+    <title>ThreeJS Seashore House | Architectural Visualization</title>
+    
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Archivo:ital,wght@0,100;0,200;0,600;1,100&family=Libre+Baskerville:wght@700&display=swap" rel="stylesheet">
+  </head>
+  <body id="body">
+    <!-- Loader Overlay -->
+    <div class="loader-overlay" id="loaderOverlay">
+      <div class="loader-content">
+        <div class="lds-roller">
+          <div></div><div></div><div></div><div></div><div></div><div></div><div></div><div></div>
+        </div>
+        <div class="loading-bar-container">
+          <div class="loading-bar" id="loadingBar"></div>
+        </div>
+        <div id="loading-text-intro">
+          <p id="loaderText">Loading Seashore House... 0%</p>
+        </div>
+        <button id="btn-continue-explore" class="hidden">
+          Explore Scene
+        </button>
+      </div>
+    </div>
+
+    <!-- UI Overlay container -->
+    <div class="ui-container">
+      
+      <!-- Top Header -->
+      <header id="header">
+        <h1>Archviz</h1>
+        <div id="middle-menu">
+          <p class="menu-item about-btn">About</p>
+          <p class="menu-item customize-btn">Customize</p>
+        </div>
+        <button id="music-btn" aria-label="Toggle Music">
+          <!-- Icon will change on state change -->
+          🔊
+        </button>
+      </header>
+
+      <!-- 3D Hotspot tooltips (Projected dynamically onto screen space) -->
+      <div id="div-points">
+        <div class="point point-0" data-index="0">
+          <div class="label"></div>
+          <div class="text">Stairs</div>
+        </div>
+        <div class="point point-1" data-index="1">
+          <div class="label"></div>
+          <div class="text">Right top view</div>
+        </div>
+        <div class="point point-2" data-index="2">
+          <div class="label"></div>
+          <div class="text">Left top view</div>
+        </div>
+        <div class="point point-3" data-index="3">
+          <div class="label"></div>
+          <div class="text">Main bedroom</div>
+        </div>
+        <div class="point point-4" data-index="4">
+          <div class="label"></div>
+          <div class="text">Back view</div>
+        </div>
+        <div class="point point-5" data-index="5">
+          <div class="label"></div>
+          <div class="text">Top living room</div>
+        </div>
+        <div class="point point-6" data-index="6">
+          <div class="label"></div>
+          <div class="text">Right pool</div>
+        </div>
+      </div>
+
+      <!-- Main Splash Title (revealed after loading) -->
+      <div class="section" id="section-logo">
+        <h1 id="titulo-explorar">Seashore<br><span>House</span></h1>
+        <div id="button-scroll">
+          <svg class="svg-circle" xmlns="http://www.w3.org/2000/svg" width="44" height="44">
+            <path d="m27.014 23.731-4.288 3.7V15.166a.686.686 0 1 0-1.372 0v12.26l-4.289-3.7a.687.687 0 0 0-.9 1.039l5.87 5.058 5.87-5.058a.687.687 0 0 0-.9-1.039Z" fill="#ffffff"/>
+            <circle cx="22" cy="22" r="21.25" fill="none" stroke="#ffffff" stroke-width="1.5"/>
+          </svg>
+          <p>Explore the real-time architectural visualization in threejs</p>
+        </div>
+      </div>
+
+      <!-- Customize Panel (sun controls + effects toggle) -->
+      <div class="customize-container drawer hidden">
+        <div class="customize-box">
+          <button class="close-btn" id="customize-close">✕ Close</button>
+          <h2 class="panel-title">Customize Sunlight</h2>
+          
+          <div class="preset-buttons mb-6">
+            <button class="preset-btn midday-btn">Midday</button>
+            <button class="preset-btn sunset-btn active">Sunset</button>
+          </div>
+
+          <div class="control-group">
+            <label for="xposition">Sun Position X (East-West)</label>
+            <input id="xposition" type="range" min="-100" max="100" value="38">
+          </div>
+          
+          <div class="control-group">
+            <label for="yposition">Sun Elevation (Height)</label>
+            <input id="yposition" type="range" min="1" max="80" value="27">
+          </div>
+
+          <div class="control-group">
+            <label for="zposition">Sun Position Z (North-South)</label>
+            <input id="zposition" type="range" min="-100" max="100" value="31">
+          </div>
+
+          <div class="control-group post-process-group">
+            <button class="toggle-btn" id="toggle-pp">Toggle Post Processing</button>
+            <small>Reduces performance slightly.</small>
+          </div>
+        </div>
+      </div>
+
+      <!-- About Modal -->
+      <div class="about-container drawer hidden">
+        <div class="about-box">
+          <button class="close-btn" id="about-close">✕ Close</button>
+          <h2 class="panel-title">About this project</h2>
+          <p>This Three.js project is an interactive 3D architectural visualization recreating Anderson Mancini's original masterpiece.</p>
+          <p>The 3D model is built with high-fidelity meshes, realistic water reflection shaders, dynamic shadow mapping, and animated bird assets flying in real time.</p>
+          <p>Optimized for modern WebGL capabilities using orbit coordinate navigation and canvas screencast algorithms.</p>
+          
+          <ul class="about-links">
+            <li><a href="https://github.com/ektogamat" target="_blank">Original GitHub</a></li>
+            <li><a href="https://threejs-archviz.vercel.app/" target="_blank">Original Live Site</a></li>
+          </ul>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- The 3D WebGL Canvas Container -->
+    <div id="canvas-container"></div>
+
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

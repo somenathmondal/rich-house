@@ -462,105 +462,112 @@ body, html {
   transform: translateY(4px);
 }
 
-/* 3D Hotspot styling */
-#div-points {
+/* View Navigator — Apple Dock-style icon rail on the right edge */
+#view-nav {
   position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  z-index: 5;
-  pointer-events: none;
-}
-
-.point {
-  position: absolute;
-  top: 0;
-  left: 0;
-  pointer-events: auto; /* Enable clicking on individual hotspots */
-  cursor: pointer;
-  z-index: 10;
+  right: 14px;
+  top: 50%;
+  transform: translateY(-50%);
   display: flex;
+  flex-direction: column;
   align-items: center;
-  opacity: 0;
-  visibility: hidden;
-  transition: opacity 0.5s ease, visibility 0.5s ease;
+  gap: 10px;
+  padding: 12px 9px;
+  z-index: 20;
+  background: rgba(11, 15, 25, 0.4);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 20px;
 }
 
-.point.visible {
-  opacity: 1;
-  visibility: visible;
-}
-
-.point .label {
-  width: 22px;
-  height: 22px;
-  background-color: rgba(18, 18, 18, 0.6);
-  border: 1px solid rgba(255, 255, 255, 0.4);
-  border-radius: 50%;
-  display: flex;
-  justify-content: center;
-  align-items: center;
+.view-nav-item {
   position: relative;
-  transition: transform 0.3s;
+  width: 42px;
+  height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.09);
+  border: none;
+  border-radius: 13px;
+  cursor: pointer;
+  color: rgba(255, 255, 255, 0.85);
+  transform-origin: right center; /* dock is on the right — swell leftward */
+  transition: transform 0.12s ease-out, background 0.25s ease, color 0.25s ease;
 }
 
-.point .label:after {
-  content: '';
-  width: 6px;
-  height: 6px;
-  background-color: var(--color-white);
-  border-radius: 50%;
-  transition: background-color 0.3s;
+.view-nav-item svg {
+  width: 21px;
+  height: 21px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
-/* Hotspot pulse effect */
-.point:before {
+.view-nav-item:hover {
+  background: rgba(255, 255, 255, 0.22);
+  color: var(--color-white);
+}
+
+.view-nav-item.active {
+  background: rgba(255, 255, 255, 0.16);
+  color: var(--color-white);
+}
+
+/* Dock separator between Home and the tour views */
+.view-nav-sep {
+  width: 28px;
+  height: 1px;
+  background: rgba(255, 255, 255, 0.15);
+  margin: 2px 0;
+}
+
+/* macOS-style running dot for the active view */
+.view-nav-item.active::after {
   content: '';
   position: absolute;
-  top: 0;
-  left: 0;
-  width: 22px;
-  height: 22px;
+  right: -7px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 4px;
+  height: 4px;
   border-radius: 50%;
-  border: 1px solid var(--color-white);
-  animation: pulse 2s infinite ease-out;
-  pointer-events: none;
+  background: var(--color-white);
 }
 
-@keyframes pulse {
-  0% {
-    transform: scale(0.9);
-    opacity: 0.9;
-  }
-  100% {
-    transform: scale(1.8);
-    opacity: 0;
-  }
-}
-
-.point .text {
-  background-color: rgba(11, 15, 25, 0.85);
-  backdrop-filter: blur(10px);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+/* Tooltip label, flies out to the left of the hovered icon */
+.view-nav-item .label {
+  position: absolute;
+  right: calc(100% + 14px);
+  top: 50%;
+  transform: translateY(-50%) translateX(6px);
+  white-space: nowrap;
   padding: 6px 12px;
+  border-radius: 6px;
+  background: rgba(11, 15, 25, 0.85);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  font-family: var(--font-sans);
   font-size: 10px;
-  letter-spacing: 0.1em;
+  font-weight: 600;
+  letter-spacing: 0.15em;
   text-transform: uppercase;
-  border-radius: 4px;
-  margin-left: 12px;
-  transform: translateX(-10px);
+  color: var(--color-white);
   opacity: 0;
   pointer-events: none;
-  transition: transform 0.3s, opacity 0.3s;
+  transition: opacity 0.2s ease, transform 0.2s ease;
 }
 
-.point:hover .label {
-  transform: scale(1.15);
-  border-color: var(--color-white);
-}
-
-.point:hover .text {
+.view-nav-item:hover .label {
   opacity: 1;
-  transform: translateX(0);
+  transform: translateY(-50%) translateX(0);
+}
+
+@media (max-width: 768px) {
+  #view-nav { right: 8px; gap: 8px; padding: 10px 7px; }
+  .view-nav-item { width: 36px; height: 36px; }
 }

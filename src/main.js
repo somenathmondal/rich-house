@@ -66,19 +66,19 @@ function getGlassMaterial() {
 }
 
 // --- Hotspot Coordinates & Elements ---
+// Camera framings hand-captured in the scene via the debug panel's
+// "Hotspot Cameras → Capture current view" tool.
 const hotspots = [
-  { id: 0, name: "Stairs", position: new THREE.Vector3(-1.8, 1.2, -6.5), camPos: new THREE.Vector3(-4, 2, -3), lookAt: new THREE.Vector3(-1.8, 1.2, -6.5) },
-  { id: 1, name: "Right Top View", position: new THREE.Vector3(12.5, 7.5, 4.5), camPos: new THREE.Vector3(22, 10, -2), lookAt: new THREE.Vector3(12.5, 7.5, 4.5) },
-  { id: 2, name: "Left Top View", position: new THREE.Vector3(-14, 8, 4.5), camPos: new THREE.Vector3(-22, 11, -1), lookAt: new THREE.Vector3(-14, 8, 4.5) },
-  { id: 3, name: "Main Bedroom", position: new THREE.Vector3(-6, 4.2, -3.2), camPos: new THREE.Vector3(-8, 5, 2), lookAt: new THREE.Vector3(-6, 4.2, -3.2) },
-  { id: 4, name: "Back View", position: new THREE.Vector3(0, 3, -16), camPos: new THREE.Vector3(2, 6, -26), lookAt: new THREE.Vector3(0, 3, -16) },
-  { id: 5, name: "Top Living Room", position: new THREE.Vector3(0.5, 4.2, 1.5), camPos: new THREE.Vector3(0, 5.5, 7), lookAt: new THREE.Vector3(0.5, 4.2, 1.5) },
-  { id: 6, name: "Right Pool", position: new THREE.Vector3(11, 0.4, -3), camPos: new THREE.Vector3(18, 2.5, 3), lookAt: new THREE.Vector3(11, 0.4, -3) }
+  { id: 0, name: "Stairs", position: new THREE.Vector3(-1.8, 1.2, -6.5), camPos: new THREE.Vector3(1.7, 2.0, -19.9), lookAt: new THREE.Vector3(7.4, 1.7, -17.5) },
+  { id: 1, name: "Right Top View", position: new THREE.Vector3(12.5, 7.5, 4.5), camPos: new THREE.Vector3(19.8, 5.4, -14.2), lookAt: new THREE.Vector3(10.2, 2.9, 3.0) },
+  { id: 2, name: "Left Top View", position: new THREE.Vector3(-14, 8, 4.5), camPos: new THREE.Vector3(-16.7, 4.4, 27.5), lookAt: new THREE.Vector3(-7.3, 3.0, 9.7) },
+  { id: 3, name: "Main Bedroom", position: new THREE.Vector3(-6, 4.2, -3.2), camPos: new THREE.Vector3(-21.6, 5.4, -15.6), lookAt: new THREE.Vector3(-6.0, 4.4, -3.1) },
+  { id: 4, name: "Back View", position: new THREE.Vector3(0, 3, -16), camPos: new THREE.Vector3(-0.1, 3.3, -40.9), lookAt: new THREE.Vector3(-1.1, 2.1, -16.1) },
+  { id: 5, name: "Top Living Room", position: new THREE.Vector3(0.5, 4.2, 1.5), camPos: new THREE.Vector3(4.1, 1.9, -3.3), lookAt: new THREE.Vector3(6.3, 0.1, 5.8) },
+  { id: 6, name: "Right Pool", position: new THREE.Vector3(11, 0.4, -3), camPos: new THREE.Vector3(15.1, 1.7, 25.3), lookAt: new THREE.Vector3(-0.7, -0.4, 9.9) },
+  // Default view — matches the initial camera position/target from init()
+  { id: 7, name: "Default View", position: new THREE.Vector3(0, 2, 0), camPos: new THREE.Vector3(28, 14, 32), lookAt: new THREE.Vector3(0, 2, 0) }
 ];
-
-let pointElements = [];
-const raycaster = new THREE.Raycaster();
-const mouse = new THREE.Vector2();
 
 // --- Audio Player ---
 let audioListener, audioSound, audioLoader;
@@ -254,20 +254,57 @@ function setupLights() {
 }
 
 // --- Lens flare attached to the sun ---
+// Recipe matched to the reference: a huge warm atmospheric glow on the sun
+// plus large chromatic rainbow ghosts marching along the axis past screen
+// centre (distance 1.0 = centre, >1 continues to the opposite quadrant).
+let flareGlow = null;
+let flareGhosts = [];
+
+// Soft radial glow texture (white core fading to black). lensflare1.jpg is a
+// hard-edged flat disc — at large sizes it rendered as a giant sharp circle.
+// A canvas gradient fades to black, so the additive blend melts into the sky.
+function makeGlowTexture() {
+  const size = 256;
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  const g = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+  g.addColorStop(0.0, '#ffffff');
+  g.addColorStop(0.15, '#bbbbbb');
+  g.addColorStop(0.4, '#444444');
+  g.addColorStop(0.7, '#141414');
+  g.addColorStop(1.0, '#000000');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, size, size);
+  return new THREE.CanvasTexture(canvas);
+}
+
 function setupLensflare() {
   const loader = new THREE.TextureLoader(loadingManager);
-  const glow = loader.load('textures/lensflare1.jpg');   // main soft glow
-  const ring = loader.load('textures/lensflare3.jpg');   // halo ring
-  const burst = loader.load('textures/lensflare22.jpeg'); // chromatic ghosts
+  const glowTex = makeGlowTexture();                         // soft warm glow
+  const ringTex = loader.load('textures/lensflare3.jpg');   // rainbow halo ring
+  const burstTex = loader.load('textures/lensflare22.jpeg'); // chromatic arc pair
 
   const lensflare = new Lensflare();
-  // Main glow sits on the sun itself (distance 0).
-  lensflare.addElement(new LensflareElement(glow, 500, 0, sunLight.color));
-  // Secondary ghosts stream along the axis toward screen centre.
-  lensflare.addElement(new LensflareElement(burst, 60, 0.4));
-  lensflare.addElement(new LensflareElement(ring, 90, 0.6));
-  lensflare.addElement(new LensflareElement(burst, 70, 0.75));
-  lensflare.addElement(new LensflareElement(ring, 140, 0.9));
+
+  // Big golden glow sitting on the sun itself — deep amber and oversized so
+  // it reads as atmospheric sunset haze, not a pale disc.
+  const warm = new THREE.Color(1.0, 0.58, 0.22);
+  flareGlow = new LensflareElement(glowTex, 1400, 0, warm);
+  lensflare.addElement(flareGlow);
+
+  // Rainbow ghosts along the flare axis — compact chromatic arcs lead,
+  // rings kept small/subtle (big ring outlines dominated too much).
+  flareGhosts = [
+    new LensflareElement(burstTex, 280, 0.45),
+    new LensflareElement(ringTex, 140, 0.65),
+    new LensflareElement(burstTex, 420, 0.9),
+    new LensflareElement(burstTex, 240, 1.15),
+    new LensflareElement(ringTex, 110, 1.35),
+    new LensflareElement(burstTex, 320, 1.6)
+  ];
+  flareGhosts.forEach((g) => lensflare.addElement(g));
+  flareGhosts.forEach((g) => { g.userData_baseSize = g.size; });
 
   // Attach to the sun so the flare tracks the light position.
   sunLight.add(lensflare);
@@ -528,24 +565,68 @@ function setupWater() {
   console.log("Reflective Water shader added over pool footprint.");
 }
 
-// --- Setup HTML Hotspots ---
-function setupHotspots() {
-  hotspots.forEach(pt => {
-    const el = document.querySelector(`.point-${pt.id}`);
-    if (el) {
-      pointElements.push({
-        position: pt.position,
-        element: el,
-        camPos: pt.camPos,
-        lookAt: pt.lookAt
-      });
+// --- Setup View Navigator (Apple Dock-style icon rail, right edge) ---
+const VIEW_ICONS = [
+  // 0 Stairs
+  '<svg viewBox="0 0 24 24"><path d="M4 20h4v-4h4v-4h4V8h4V4"/></svg>',
+  // 1 Right Top View (arrow up-right)
+  '<svg viewBox="0 0 24 24"><path d="M7 17L17 7"/><path d="M9 7h8v8"/></svg>',
+  // 2 Left Top View (arrow up-left)
+  '<svg viewBox="0 0 24 24"><path d="M17 17L7 7"/><path d="M15 7H7v8"/></svg>',
+  // 3 Main Bedroom (bed)
+  '<svg viewBox="0 0 24 24"><path d="M3 7v11"/><path d="M3 14h18v4"/><path d="M21 14v-3a2 2 0 0 0-2-2h-9v5"/><circle cx="6.5" cy="10.5" r="1.5"/></svg>',
+  // 4 Back View (rotate arrow)
+  '<svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/></svg>',
+  // 5 Top Living Room (sofa)
+  '<svg viewBox="0 0 24 24"><path d="M5 12V8a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v4"/><path d="M3 14a2 2 0 0 1 4 0v1h10v-1a2 2 0 0 1 4 0v5H3v-5z"/></svg>',
+  // 6 Right Pool (waves)
+  '<svg viewBox="0 0 24 24"><path d="M2 10c2 0 2-1.5 4-1.5S8 10 10 10s2-1.5 4-1.5 2 1.5 4 1.5 2-1.5 4-1.5"/><path d="M2 16c2 0 2-1.5 4-1.5S8 16 10 16s2-1.5 4-1.5 2 1.5 4 1.5 2-1.5 4-1.5"/></svg>',
+  // 7 Default View (home)
+  '<svg viewBox="0 0 24 24"><path d="M3 11l9-8 9 8"/><path d="M5 9.5V20h14V9.5"/></svg>'
+];
 
-      // Fly camera on click
-      el.addEventListener('click', (e) => {
-        e.stopPropagation();
-        flyToTarget(pt.camPos, pt.lookAt);
-      });
+function setupHotspots() {
+  const nav = document.getElementById('view-nav');
+  if (!nav) return;
+
+  // Home first, separator, then the tour views.
+  const displayOrder = [7, 0, 1, 2, 3, 4, 5, 6];
+  const items = [];
+  displayOrder.forEach((id, idx) => {
+    const pt = hotspots.find((h) => h.id === id);
+    if (!pt) return;
+
+    const btn = document.createElement('button');
+    btn.className = 'view-nav-item';
+    btn.innerHTML = (VIEW_ICONS[pt.id] || VIEW_ICONS[0]) + `<span class="label">${pt.name}</span>`;
+    btn.addEventListener('click', () => {
+      items.forEach((el) => el.classList.remove('active'));
+      btn.classList.add('active');
+      flyToTarget(pt.camPos, pt.lookAt);
+    });
+    nav.appendChild(btn);
+    items.push(btn);
+
+    // Separator between Home and the tour views (macOS dock style)
+    if (idx === 0) {
+      const sep = document.createElement('div');
+      sep.className = 'view-nav-sep';
+      nav.appendChild(sep);
     }
+  });
+
+  // Dock magnification — icons swell as the cursor nears them (gaussian-ish
+  // falloff on vertical distance, like the macOS Dock).
+  nav.addEventListener('mousemove', (e) => {
+    items.forEach((btn) => {
+      const r = btn.getBoundingClientRect();
+      const d = Math.abs(e.clientY - (r.top + r.height / 2));
+      const s = 1 + 0.55 * Math.max(0, 1 - d / 110);
+      btn.style.transform = `scale(${s.toFixed(3)})`;
+    });
+  });
+  nav.addEventListener('mouseleave', () => {
+    items.forEach((btn) => { btn.style.transform = 'scale(1)'; });
   });
 }
 
@@ -575,46 +656,6 @@ function flyToTarget(targetCamPos, targetLookAt) {
     ease: 'power2.inOut',
     onComplete: () => {
       controls.enabled = true;
-    }
-  });
-}
-
-// --- Screen Space Hotspot Projection ---
-function updateHotspots() {
-  const tempV = new THREE.Vector3();
-
-  pointElements.forEach(pt => {
-    tempV.copy(pt.position);
-    tempV.project(camera); // project 3D coordinate onto normalized device coordinates (NDC)
-
-    const isBehindCamera = tempV.z > 1;
-
-    if (isBehindCamera) {
-      pt.element.classList.remove('visible');
-    } else {
-      // Raycasting check for occlusion (hiding points behind architecture walls)
-      if (houseMesh) {
-        const direction = pt.position.clone().sub(camera.position).normalize();
-        raycaster.set(camera.position, direction);
-
-        const intersects = raycaster.intersectObjects(houseMesh.children, true);
-        const distanceToPoint = camera.position.distanceTo(pt.position);
-
-        // If there's an intersection closer than the point, it is occluded
-        const isOccluded = intersects.length > 0 && intersects[0].distance < (distanceToPoint - 0.2);
-
-        if (isOccluded) {
-          pt.element.classList.remove('visible');
-          return;
-        }
-      }
-
-      // Convert NDC (-1 to 1) to screen pixels (width & height bounds)
-      const x = (tempV.x * 0.5 + 0.5) * window.innerWidth;
-      const y = (-(tempV.y) * 0.5 + 0.5) * window.innerHeight;
-
-      pt.element.style.transform = `translate(${x}px, ${y}px)`;
-      pt.element.classList.add('visible');
     }
   });
 }
@@ -739,7 +780,15 @@ function bindUIEvents() {
 }
 
 // --- Tweakpane Debug Panel (live tuning) ---
+// Only mounts when the URL contains #debug (e.g. localhost:5174/#debug).
 function setupDebugPanel() {
+  if (!window.location.hash.includes('debug')) {
+    // React to the hash being added/removed without requiring a manual reload.
+    window.addEventListener('hashchange', () => window.location.reload(), { once: true });
+    return;
+  }
+  window.addEventListener('hashchange', () => window.location.reload(), { once: true });
+
   const container = document.createElement('div');
   container.style.cssText =
     'position:fixed; top:70px; left:12px; width:280px; z-index:60;';
@@ -800,6 +849,38 @@ function setupDebugPanel() {
     if (waterPlane) waterPlane.material.uniforms['distortionScale'].value = ev.value;
   });
 
+  // Lens flare
+  const flare = { glow: 1400, ghosts: 1.0, warmth: '#ff9438' };
+  const fFlare = pane.addFolder({ title: 'Lens Flare' });
+  fFlare.addBinding(flare, 'glow', { min: 0, max: 3000, step: 25, label: 'glow size' }).on('change', (ev) => {
+    if (flareGlow) flareGlow.size = ev.value;
+  });
+  fFlare.addBinding(flare, 'warmth', { label: 'glow tint' }).on('change', (ev) => {
+    if (flareGlow) flareGlow.color.set(ev.value);
+  });
+  fFlare.addBinding(flare, 'ghosts', { min: 0, max: 3, step: 0.05, label: 'ghost scale' }).on('change', (ev) => {
+    flareGhosts.forEach((g) => { g.size = g.userData_baseSize * ev.value; });
+  });
+
+  // Hotspot camera tuning — orbit to a good view, then Capture to store it
+  // on the selected hotspot (and log it so the values can be baked into code).
+  const hs = { index: 0 };
+  const fHs = pane.addFolder({ title: 'Hotspot Cameras' });
+  fHs.addBinding(hs, 'index', {
+    label: 'hotspot',
+    options: Object.fromEntries(hotspots.map((h) => [h.name, h.id]))
+  });
+  fHs.addButton({ title: 'Fly to hotspot' }).on('click', () => {
+    const pt = hotspots[hs.index];
+    flyToTarget(pt.camPos, pt.lookAt);
+  });
+  fHs.addButton({ title: 'Capture current view' }).on('click', () => {
+    const pt = hotspots[hs.index];
+    pt.camPos = camera.position.clone();
+    pt.lookAt = controls.target.clone();
+    console.warn(`[hotspot] "${pt.name}" camPos(${pt.camPos.x.toFixed(1)}, ${pt.camPos.y.toFixed(1)}, ${pt.camPos.z.toFixed(1)}) lookAt(${pt.lookAt.x.toFixed(1)}, ${pt.lookAt.y.toFixed(1)}, ${pt.lookAt.z.toFixed(1)})`);
+  });
+
   // Post-processing
   const post = { enabled: false, ssao: 8, bloom: 0.25 };
   const fPost = pane.addFolder({ title: 'Post FX' });
@@ -843,10 +924,7 @@ function animate() {
     mixer.update(delta);
   });
 
-  // 4. Project 3D Hotspots onto 2D viewport
-  updateHotspots();
-
-  // 5. Render Scene — through the post-processing composer when enabled,
+  // 4. Render Scene — through the post-processing composer when enabled,
   // otherwise straight to screen.
   if (isPostProcessingEnabled && composer) {
     composer.render();

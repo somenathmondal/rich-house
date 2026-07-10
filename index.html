@@ -45,37 +45,8 @@
         </button>
       </header>
 
-      <!-- 3D Hotspot tooltips (Projected dynamically onto screen space) -->
-      <div id="div-points">
-        <div class="point point-0" data-index="0">
-          <div class="label"></div>
-          <div class="text">Stairs</div>
-        </div>
-        <div class="point point-1" data-index="1">
-          <div class="label"></div>
-          <div class="text">Right top view</div>
-        </div>
-        <div class="point point-2" data-index="2">
-          <div class="label"></div>
-          <div class="text">Left top view</div>
-        </div>
-        <div class="point point-3" data-index="3">
-          <div class="label"></div>
-          <div class="text">Main bedroom</div>
-        </div>
-        <div class="point point-4" data-index="4">
-          <div class="label"></div>
-          <div class="text">Back view</div>
-        </div>
-        <div class="point point-5" data-index="5">
-          <div class="label"></div>
-          <div class="text">Top living room</div>
-        </div>
-        <div class="point point-6" data-index="6">
-          <div class="label"></div>
-          <div class="text">Right pool</div>
-        </div>
-      </div>
+      <!-- View navigator — 2D list of camera views, right edge (items built from the hotspots array in main.js) -->
+      <nav id="view-nav" aria-label="Scene views"></nav>
 
       <!-- Main Splash Title (revealed after loading) -->
       <div class="section" id="section-logo">

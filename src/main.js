@@ -20,6 +20,8 @@ let scene, camera, renderer, controls;
 let sunLight, sunHelper;
 let waterPlane;
 let mixers = []; // For bird animations
+let birdFlights = []; // Circling flight paths for the birds
+let elapsedTime = 0; // Accumulated scene time (drives flight paths)
 let clock = new THREE.Clock();
 let isPostProcessingEnabled = false;
 
@@ -28,6 +30,9 @@ let composer, ssaoPass, bloomPass;
 
 // --- Pool water ---
 let poolSurfaceMesh = null; // baked tiled pool surface, replaced by Water shader
+
+// --- Grass ---
+let grassMaterials = []; // lawn materials, tunable via the debug panel
 
 // --- Glass ---
 // Glass materials get the HDRI as their envMap (applied per-material, NOT via
@@ -84,6 +89,14 @@ const hotspots = [
 let audioListener, audioSound, audioLoader;
 let isMusicPlaying = false;
 
+// --- Analytics ---
+// Thin wrapper over gtag: no-ops if GA is blocked/unavailable.
+function track(eventName, params = {}) {
+  if (typeof window.gtag === 'function') {
+    window.gtag('event', eventName, params);
+  }
+}
+
 // --- Initialize Loading Manager ---
 const loadingManager = new THREE.LoadingManager();
 const loaderBar = document.getElementById('loadingBar');
@@ -109,14 +122,26 @@ function revealScene() {
   if (!loaderOverlay || loaderOverlay.dataset.revealed === 'true') return;
   loaderOverlay.dataset.revealed = 'true';
 
+  // Cinematic intro: start far out and high, then dolly in to the default
+  // view as the overlay fades. Controls stay locked until the move lands.
+  controls.enabled = false;
+  camera.position.set(64, 34, 74);
+  gsap.to(camera.position, {
+    x: 28, y: 14, z: 32,
+    duration: 3.4,
+    ease: 'power3.inOut',
+    onUpdate: () => camera.lookAt(controls.target),
+    onComplete: () => { controls.enabled = true; }
+  });
+
   gsap.to(loaderOverlay, {
     opacity: 0,
     duration: 1.0,
     onComplete: () => {
       loaderOverlay.style.display = 'none';
 
-      // Fade in main logo title splash
-      gsap.fromTo('#section-logo', { opacity: 0, y: 30 }, { opacity: 1, y: 0, duration: 1.2, delay: 0.3 });
+      // Fade in main logo title splash (timed to land with the camera)
+      gsap.fromTo('#section-logo', { opacity: 0, y: 30 }, { opacity: 1, y: 0, duration: 1.4, delay: 1.2 });
 
       // Try to start ambient music. Browsers keep the AudioContext suspended
       // until a user gesture, so it may stay silent until the first click.
@@ -421,6 +446,16 @@ function loadGLTFModels() {
           applyWallNormal(child.material, 4, 0.4);
         }
 
+        // Grass: lift the lawn out of the dark baked hunter-green toward a
+        // livelier natural lawn (exact match = the Ground plane only).
+        if (matName === 'grass') {
+          child.material.color = new THREE.Color(0x5d8046);
+          child.material.roughness = 1.0;
+          child.material.envMapIntensity = 0.4; // keep the lawn matte
+          child.material.needsUpdate = true;
+          grassMaterials.push(child.material);
+        }
+
         // Water fix: capture the baked tiled-cyan pool surface so we can hide
         // it and replace it with a real reflective Water shader (like the
         // reference). Targets ONLY the tiled-water material by exact name.
@@ -440,29 +475,30 @@ function loadGLTFModels() {
     setupWater();
   });
 
-  // Load animated Seagull birds
+  // Load animated Seagull birds — small, high, and circling slowly so they
+  // read as a distant flock rather than large birds hovering over the roof.
   gltfLoader.load('models/bird.glb', (gltf) => {
     const birdModel = gltf.scene;
-    birdModel.scale.set(0.15, 0.15, 0.15);
 
-    // Create 3 bird instances flying at different positions
-    const birdPositions = [
-      new THREE.Vector3(-15, 12, 10),
-      new THREE.Vector3(10, 15, -15),
-      new THREE.Vector3(5, 14, 5)
+    // Per-bird flight path parameters (circle radius/height/speed/phase)
+    const flights = [
+      { scale: 0.06, radius: 34, height: 22, speed: 0.10, phase: 0.0 },
+      { scale: 0.08, radius: 42, height: 26, speed: 0.07, phase: 2.1 },
+      { scale: 0.05, radius: 28, height: 19, speed: 0.12, phase: 4.2 }
     ];
 
-    birdPositions.forEach((pos, index) => {
+    flights.forEach((f, index) => {
       const birdClone = birdModel.clone();
-      birdClone.position.copy(pos);
+      birdClone.scale.set(f.scale, f.scale, f.scale);
       scene.add(birdClone);
+      birdFlights.push({ obj: birdClone, ...f });
 
       // Setup Animation Mixer
       if (gltf.animations.length > 0) {
         const mixer = new THREE.AnimationMixer(birdClone);
         const action = mixer.clipAction(gltf.animations[0]);
         action.play();
-        
+
         // Offset starting times
         action.time = index * 0.5;
         mixers.push(mixer);
@@ -603,6 +639,7 @@ function setupHotspots() {
       items.forEach((el) => el.classList.remove('active'));
       btn.classList.add('active');
       flyToTarget(pt.camPos, pt.lookAt);
+      track('view_navigate', { view_name: pt.name });
     });
     nav.appendChild(btn);
     items.push(btn);
@@ -679,6 +716,7 @@ function bindUIEvents() {
   customizeBtn.addEventListener('click', () => {
     aboutDrawer.classList.add('hidden');
     customizeDrawer.classList.remove('hidden');
+    track('drawer_open', { drawer: 'customize' });
   });
 
   customizeClose.addEventListener('click', () => {
@@ -688,6 +726,7 @@ function bindUIEvents() {
   aboutBtn.addEventListener('click', () => {
     customizeDrawer.classList.add('hidden');
     aboutDrawer.classList.remove('hidden');
+    track('drawer_open', { drawer: 'about' });
   });
 
   aboutClose.addEventListener('click', () => {
@@ -706,6 +745,7 @@ function bindUIEvents() {
       isMusicPlaying = true;
       musicBtn.innerText = "🔊";
     }
+    track('music_toggle', { state: isMusicPlaying ? 'on' : 'off' });
   });
 
   // Sunlight position sliders binding
@@ -728,6 +768,12 @@ function bindUIEvents() {
     if (waterPlane) waterPlane.material.uniforms['sunDirection'].value.copy(sunLight.position).normalize();
   });
 
+  // Track slider adjustments once per gesture ('change' fires on release,
+  // unlike 'input' which fires continuously while dragging)
+  [['x', xSlider], ['y', ySlider], ['z', zSlider]].forEach(([axis, el]) => {
+    el.addEventListener('change', (e) => track('sun_adjust', { axis, value: Number(e.target.value) }));
+  });
+
   // Preset Buttons (Sunset vs Midday)
   const middayBtn = document.querySelector('.midday-btn');
   const sunsetBtn = document.querySelector('.sunset-btn');
@@ -744,6 +790,7 @@ function bindUIEvents() {
     xSlider.value = 10;
     ySlider.value = 70;
     zSlider.value = 10;
+    track('sun_preset', { preset: 'midday' });
   });
 
   sunsetBtn.addEventListener('click', () => {
@@ -758,12 +805,14 @@ function bindUIEvents() {
     xSlider.value = 38;
     ySlider.value = 27;
     zSlider.value = 31;
+    track('sun_preset', { preset: 'sunset' });
   });
 
   // Main scroll button - flies camera to first hotspot (Stairs)
   document.getElementById('button-scroll').addEventListener('click', () => {
     const pt = hotspots[0];
     flyToTarget(pt.camPos, pt.lookAt);
+    track('explore_click', { view_name: pt.name });
   });
 
   // Post-processing toggle (SSAO + bloom)
@@ -775,6 +824,7 @@ function bindUIEvents() {
       ppBtn.innerText = isPostProcessingEnabled
         ? 'Post Processing: ON'
         : 'Toggle Post Processing';
+      track('post_processing_toggle', { enabled: isPostProcessingEnabled });
     });
   }
 }
@@ -837,6 +887,13 @@ function setupDebugPanel() {
   const env = { intensity: 0.5 };
   fSun.addBinding(env, 'intensity', { min: 0, max: 3, step: 0.05, label: 'env light' }).on('change', (ev) => {
     scene.environmentIntensity = ev.value;
+  });
+
+  // Grass
+  const grass = { color: '#5d8046' };
+  const fGrass = pane.addFolder({ title: 'Grass' });
+  fGrass.addBinding(grass, 'color').on('change', (ev) => {
+    grassMaterials.forEach((m) => m.color.set(ev.value));
   });
 
   // Water
@@ -919,9 +976,24 @@ function animate() {
     waterPlane.material.uniforms['time'].value += delta * 0.4;
   }
 
-  // 3. Update active bird animation mixers
+  // 3. Update active bird animation mixers + circling flight paths
+  elapsedTime += delta;
   mixers.forEach(mixer => {
     mixer.update(delta);
+  });
+  birdFlights.forEach((b) => {
+    const a = elapsedTime * b.speed + b.phase;
+    const x = Math.cos(a) * b.radius;
+    const z = Math.sin(a) * b.radius;
+    const y = b.height + Math.sin(elapsedTime * 0.5 + b.phase) * 0.8; // gentle bob
+    // Face along the direction of travel (look slightly ahead on the path)
+    const ahead = 0.05;
+    b.obj.position.set(x, y, z);
+    b.obj.lookAt(
+      Math.cos(a + ahead) * b.radius,
+      y,
+      Math.sin(a + ahead) * b.radius
+    );
   });
 
   // 4. Render Scene — through the post-processing composer when enabled,

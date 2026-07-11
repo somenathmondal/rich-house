@@ -93,7 +93,7 @@ const hotspots = [
   { id: 5, name: "Top Living Room", position: new THREE.Vector3(0.5, 4.2, 1.5), camPos: new THREE.Vector3(4.1, 1.9, -3.3), lookAt: new THREE.Vector3(6.3, 0.1, 5.8) },
   { id: 6, name: "Right Pool", position: new THREE.Vector3(11, 0.4, -3), camPos: new THREE.Vector3(15.1, 1.7, 25.3), lookAt: new THREE.Vector3(-0.7, -0.4, 9.9) },
   // Default view — matches the initial camera position/target from init()
-  { id: 7, name: "Default View", position: new THREE.Vector3(0, 2, 0), camPos: new THREE.Vector3(26.7, 13.0, 33.5), lookAt: new THREE.Vector3(-0.5, -3.8, 3.0) }
+  { id: 7, name: "Default View", position: new THREE.Vector3(0, 2, 0), camPos: new THREE.Vector3(-26.6, 3.9, 33.0), lookAt: new THREE.Vector3(-0.7, -4.3, 2.9) }
 ];
 
 // --- Audio Player ---
@@ -260,7 +260,7 @@ function init() {
 
   // 2. Camera Setup
   camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
-  camera.position.set(26.7, 13.0, 33.5); // Default View (captured)
+  camera.position.set(-26.6, 3.9, 33.0); // Default View (captured)
 
   // 3. Renderer Setup
   renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: "high-performance" });
@@ -279,7 +279,7 @@ function init() {
   controls.maxPolarAngle = Math.PI / 2 - 0.05; // Prevent camera going below ground
   controls.minDistance = 3;
   controls.maxDistance = 80;
-  controls.target.set(-0.5, -3.8, 3.0); // Default View look-at (captured)
+  controls.target.set(-0.7, -4.3, 2.9); // Default View look-at (captured)
 
   // 5. Audio Setup
   audioListener = new THREE.AudioListener();

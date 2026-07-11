@@ -74,31 +74,42 @@
       <div class="customize-container drawer hidden">
         <div class="customize-box">
           <button class="close-btn" id="customize-close">✕ Close</button>
-          <h2 class="panel-title">Customize Sunlight</h2>
-          
-          <div class="preset-buttons mb-6">
+
+          <p class="panel-eyebrow">Sunlight</p>
+          <h2 class="panel-title">Shape <em>the light.</em></h2>
+
+          <div class="preset-buttons" role="group" aria-label="Time of day">
             <button class="preset-btn midday-btn">Midday</button>
             <button class="preset-btn sunset-btn active">Sunset</button>
           </div>
 
           <div class="control-group">
-            <label for="xposition">Sun Position X (East-West)</label>
-            <input id="xposition" type="range" min="-100" max="100" value="38">
-          </div>
-          
-          <div class="control-group">
-            <label for="yposition">Sun Elevation (Height)</label>
-            <input id="yposition" type="range" min="1" max="80" value="27">
+            <div class="control-row">
+              <label for="elevation">Elevation</label>
+              <span class="control-value"><span id="elevation-value">29</span>&deg;</span>
+            </div>
+            <input id="elevation" type="range" min="2" max="88" value="29" style="--fill: 31%">
           </div>
 
           <div class="control-group">
-            <label for="zposition">Sun Position Z (North-South)</label>
-            <input id="zposition" type="range" min="-100" max="100" value="31">
+            <div class="control-row">
+              <label for="azimuth">Azimuth</label>
+              <span class="control-value"><span id="azimuth-value">51</span>&deg;</span>
+            </div>
+            <input id="azimuth" type="range" min="0" max="360" value="51" style="--fill: 14%">
           </div>
 
-          <div class="control-group post-process-group">
-            <button class="toggle-btn" id="toggle-pp">Toggle Post Processing</button>
-            <small>Reduces performance slightly.</small>
+          <div class="panel-divider"></div>
+
+          <p class="panel-eyebrow">Rendering</p>
+          <div class="switch-row">
+            <div class="switch-copy">
+              <p class="switch-label">Post-processing</p>
+              <p class="switch-hint">Ambient occlusion and bloom. Heavier on the GPU.</p>
+            </div>
+            <button class="switch" id="toggle-pp" role="switch" aria-checked="false" aria-label="Post-processing">
+              <span class="switch-knob"></span>
+            </button>
           </div>
         </div>
       </div>
@@ -107,14 +118,16 @@
       <div class="about-container drawer hidden">
         <div class="about-box">
           <button class="close-btn" id="about-close">✕ Close</button>
-          <h2 class="panel-title">About this project</h2>
-          <p>This Three.js project is an interactive 3D architectural visualization recreating Anderson Mancini's original masterpiece.</p>
-          <p>The 3D model is built with high-fidelity meshes, realistic water reflection shaders, dynamic shadow mapping, and animated bird assets flying in real time.</p>
-          <p>Optimized for modern WebGL capabilities using orbit coordinate navigation and canvas screencast algorithms.</p>
-          
+
+          <p class="panel-eyebrow">About</p>
+          <h2 class="panel-title">A villa, <em>rendered live.</em></h2>
+
+          <p>Seashore House is a real-time architectural visualization built with Three.js &mdash; a recreation of Anderson Mancini&rsquo;s original WebGL showcase.</p>
+          <p>Everything happens in your browser: HDRI sunlight, reflective pool water, circling birds, and cinematic camera travels between rooms. Drag to orbit, scroll to zoom, and use the dock on the right to tour the house.</p>
+
           <ul class="about-links">
-            <li><a href="https://github.com/ektogamat" target="_blank">Original GitHub</a></li>
-            <li><a href="https://threejs-archviz.vercel.app/" target="_blank">Original Live Site</a></li>
+            <li><a href="https://threejs-archviz.vercel.app/" target="_blank">View the original <span aria-hidden="true">&nearr;</span></a></li>
+            <li><a href="https://github.com/ektogamat" target="_blank">Anderson Mancini on GitHub <span aria-hidden="true">&nearr;</span></a></li>
           </ul>
         </div>
       </div>

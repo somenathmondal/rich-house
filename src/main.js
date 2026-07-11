@@ -89,6 +89,44 @@ const hotspots = [
 let audioListener, audioSound, audioLoader;
 let isMusicPlaying = false;
 
+// --- Sun spherical controls ---
+// The sun orbits the scene at a fixed radius; elevation/azimuth (degrees)
+// drive its position — matching the reference's intuitive controls.
+const SUN_RADIUS = 56;
+const sunAngles = { elevation: 29, azimuth: 51 }; // ≈ original (38, 27, 31)
+function updateSunFromAngles() {
+  const el = THREE.MathUtils.degToRad(sunAngles.elevation);
+  const az = THREE.MathUtils.degToRad(sunAngles.azimuth);
+  sunLight.position.set(
+    SUN_RADIUS * Math.cos(el) * Math.sin(az),
+    SUN_RADIUS * Math.sin(el),
+    SUN_RADIUS * Math.cos(el) * Math.cos(az)
+  );
+  if (waterPlane) waterPlane.material.uniforms['sunDirection'].value.copy(sunLight.position).normalize();
+  syncSunUI();
+}
+
+// Keep the drawer UI (sliders, track fills, serif degree readouts) in lockstep
+// with the sun state — including while presets animate the angles via GSAP.
+function syncSunUI() {
+  const elSlider = document.getElementById('elevation');
+  const azSlider = document.getElementById('azimuth');
+  const elValue = document.getElementById('elevation-value');
+  const azValue = document.getElementById('azimuth-value');
+
+  if (elSlider) {
+    elSlider.value = sunAngles.elevation;
+    const pct = ((sunAngles.elevation - 2) / (88 - 2)) * 100;
+    elSlider.style.setProperty('--fill', `${pct.toFixed(1)}%`);
+  }
+  if (azSlider) {
+    azSlider.value = sunAngles.azimuth;
+    azSlider.style.setProperty('--fill', `${((sunAngles.azimuth / 360) * 100).toFixed(1)}%`);
+  }
+  if (elValue) elValue.textContent = Math.round(sunAngles.elevation);
+  if (azValue) azValue.textContent = Math.round(sunAngles.azimuth);
+}
+
 // --- Analytics ---
 // Thin wrapper over gtag: no-ops if GA is blocked/unavailable.
 function track(eventName, params = {}) {
@@ -748,29 +786,23 @@ function bindUIEvents() {
     track('music_toggle', { state: isMusicPlaying ? 'on' : 'off' });
   });
 
-  // Sunlight position sliders binding
-  const xSlider = document.getElementById('xposition');
-  const ySlider = document.getElementById('yposition');
-  const zSlider = document.getElementById('zposition');
+  // Sun elevation/azimuth sliders (spherical, like the reference)
+  const elevSlider = document.getElementById('elevation');
+  const azimSlider = document.getElementById('azimuth');
 
-  xSlider.addEventListener('input', (e) => {
-    sunLight.position.x = parseFloat(e.target.value);
-    if (waterPlane) waterPlane.material.uniforms['sunDirection'].value.copy(sunLight.position).normalize();
+  elevSlider.addEventListener('input', (e) => {
+    sunAngles.elevation = parseFloat(e.target.value);
+    updateSunFromAngles();
   });
 
-  ySlider.addEventListener('input', (e) => {
-    sunLight.position.y = parseFloat(e.target.value);
-    if (waterPlane) waterPlane.material.uniforms['sunDirection'].value.copy(sunLight.position).normalize();
-  });
-
-  zSlider.addEventListener('input', (e) => {
-    sunLight.position.z = parseFloat(e.target.value);
-    if (waterPlane) waterPlane.material.uniforms['sunDirection'].value.copy(sunLight.position).normalize();
+  azimSlider.addEventListener('input', (e) => {
+    sunAngles.azimuth = parseFloat(e.target.value);
+    updateSunFromAngles();
   });
 
   // Track slider adjustments once per gesture ('change' fires on release,
   // unlike 'input' which fires continuously while dragging)
-  [['x', xSlider], ['y', ySlider], ['z', zSlider]].forEach(([axis, el]) => {
+  [['elevation', elevSlider], ['azimuth', azimSlider]].forEach(([axis, el]) => {
     el.addEventListener('change', (e) => track('sun_adjust', { axis, value: Number(e.target.value) }));
   });
 
@@ -782,14 +814,10 @@ function bindUIEvents() {
     sunsetBtn.classList.remove('active');
     middayBtn.classList.add('active');
     
-    // Animate sun settings to midday
-    gsap.to(sunLight.position, { x: 10, y: 70, z: 10, duration: 1.5 });
+    // Animate sun settings to midday (high sun, from the north-east)
+    gsap.to(sunAngles, { elevation: 79, azimuth: 45, duration: 1.5, onUpdate: updateSunFromAngles });
     gsap.to(sunLight.color, { r: 1.0, g: 0.98, b: 0.95, duration: 1.5 }); // white daylight
     gsap.to(sunLight, { intensity: 7.0, duration: 1.5 });
-    
-    xSlider.value = 10;
-    ySlider.value = 70;
-    zSlider.value = 10;
     track('sun_preset', { preset: 'midday' });
   });
 
@@ -797,14 +825,10 @@ function bindUIEvents() {
     middayBtn.classList.remove('active');
     sunsetBtn.classList.add('active');
 
-    // Animate sun settings to warm sunset
-    gsap.to(sunLight.position, { x: 38, y: 27, z: 31, duration: 1.5 });
+    // Animate sun settings to warm sunset (low sun)
+    gsap.to(sunAngles, { elevation: 29, azimuth: 51, duration: 1.5, onUpdate: updateSunFromAngles });
     gsap.to(sunLight.color, { r: 1.0, g: 0.81, b: 0.54, duration: 1.5 }); // warm gold
     gsap.to(sunLight, { intensity: 7.2, duration: 1.5 });
-
-    xSlider.value = 38;
-    ySlider.value = 27;
-    zSlider.value = 31;
     track('sun_preset', { preset: 'sunset' });
   });
 
@@ -815,15 +839,13 @@ function bindUIEvents() {
     track('explore_click', { view_name: pt.name });
   });
 
-  // Post-processing toggle (SSAO + bloom)
+  // Post-processing switch (SSAO + bloom)
   const ppBtn = document.getElementById('toggle-pp');
   if (ppBtn) {
     ppBtn.addEventListener('click', () => {
       isPostProcessingEnabled = !isPostProcessingEnabled;
-      ppBtn.classList.toggle('active', isPostProcessingEnabled);
-      ppBtn.innerText = isPostProcessingEnabled
-        ? 'Post Processing: ON'
-        : 'Toggle Post Processing';
+      ppBtn.classList.toggle('on', isPostProcessingEnabled);
+      ppBtn.setAttribute('aria-checked', String(isPostProcessingEnabled));
       track('post_processing_toggle', { enabled: isPostProcessingEnabled });
     });
   }

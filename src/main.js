@@ -99,6 +99,7 @@ const hotspots = [
 // --- Audio Player ---
 let audioListener, audioSound, audioLoader;
 let isMusicPlaying = false;
+let musicWanted = false; // reveal happened before the music finished loading
 
 // --- Sun spherical controls ---
 // The sun orbits the scene at a fixed radius; elevation/azimuth (degrees)
@@ -157,26 +158,54 @@ const continueBtn = document.getElementById('btn-continue-explore');
 
 const loaderBlueprint = document.getElementById('loaderBlueprint');
 
+// --- Smooth, byte-level load progress ---
+// LoadingManager only ticks when an asset FINISHES, so the big GLB parked
+// the bar at 0% for its whole download. Instead each heavy asset reports
+// byte progress, weighted by its real size, and the displayed value is
+// eased every frame in the render loop.
+const loadParts = { house: 0, env: 0, bird: 0, misc: 0 };
+const loadWeights = { house: 0.60, env: 0.25, bird: 0.10, misc: 0.05 };
+// Fallback totals (bytes) for when gzip hides Content-Length
+const ASSET_BYTES = { house: 1436392, env: 1164572, bird: 258932 };
+let loadTarget = 0.12; // true weighted progress (0..1); starts at a 12%
+let loadShown = 0.12;  // floor so the bar never reads as stuck at zero
+let loaderDone = false;     // all assets in
+let loaderFinished = false; // reveal sequence started
+
+function setLoadPart(key, frac) {
+  loadParts[key] = Math.max(loadParts[key], Math.min(1, frac));
+  let t = 0;
+  for (const k in loadWeights) t += loadWeights[k] * loadParts[k];
+  // 0.12 floor + real progress scaled into the remaining 88%
+  loadTarget = Math.max(loadTarget, Math.min(1, 0.12 + t * 0.88));
+}
+
+// Per-asset xhr progress callback for the three.js loaders
+function bytesProgress(key) {
+  return (xhr) => {
+    const total = (xhr.lengthComputable && xhr.total) ? xhr.total : ASSET_BYTES[key];
+    if (total) setLoadPart(key, Math.min(0.98, xhr.loaded / total));
+  };
+}
+
+function updateLoaderUI(p) {
+  const pct = Math.round(p * 100);
+  if (loaderBar) loaderBar.style.width = `${pct}%`;
+  if (loaderSun) loaderSun.style.left = `${pct}%`;   // the sun rises along the horizon
+  if (loaderPercent) loaderPercent.textContent = pct;
+  if (loaderBlueprint) loaderBlueprint.style.setProperty('--draw', p); // villa sketches itself
+}
+
 loadingManager.onProgress = (url, itemsLoaded, itemsTotal) => {
-  const progress = Math.round((itemsLoaded / itemsTotal) * 100);
-  if (loaderBar) loaderBar.style.width = `${progress}%`;
-  if (loaderSun) loaderSun.style.left = `${progress}%`;   // the sun rises along the horizon
-  if (loaderPercent) loaderPercent.textContent = progress;
-  if (loaderBlueprint) loaderBlueprint.style.setProperty('--draw', progress / 100); // villa sketches itself
-  if (loaderOverlay) loaderOverlay.style.setProperty('--clear', progress / 100);    // frosted glass lifts
+  // Small textures/decoder files roll up into the 5% "misc" share
+  setLoadPart('misc', itemsLoaded / itemsTotal);
 };
 
 loadingManager.onLoad = () => {
   // performance.now() is ms since navigation start = total time to all assets
   console.warn(`[load] all assets loaded in ${(performance.now() / 1000).toFixed(2)}s`);
-  if (loaderText) loaderText.innerText = "Ready";
-  if (loaderOverlay) {
-    loaderOverlay.style.setProperty('--clear', 1);
-    loaderOverlay.classList.add('complete'); // sketch turns gold
-  }
-  if (loaderBlueprint) loaderBlueprint.style.setProperty('--draw', 1);
-  // Brief beat on the finished gold sketch, then reveal.
-  setTimeout(revealScene, 800);
+  loaderDone = true;
+  loadTarget = 1; // let the eased display sweep to 100%
 };
 
 // Fade out the loading overlay and reveal the scene. Used on auto-load and
@@ -228,24 +257,28 @@ function revealScene() {
     }
   });
 
-  gsap.to(loaderOverlay, {
-    opacity: 0,
-    duration: 1.0,
-    onComplete: () => {
-      loaderOverlay.style.display = 'none';
+  // The ink panels part like the villa's sliding glass doors, opening
+  // straight onto the Back View as the camera hold begins.
+  loaderOverlay.classList.add('revealing');
+  setTimeout(() => { loaderOverlay.style.display = 'none'; }, 1300);
 
+  {
       // Fade in main logo title splash (timed to land late in the sweep)
       gsap.fromTo('#section-logo', { opacity: 0, y: 30 }, { opacity: 1, y: 0, duration: 1.4, delay: 5.5 });
 
       // Try to start ambient music. Browsers keep the AudioContext suspended
       // until a user gesture, so it may stay silent until the first click.
-      if (audioSound && audioSound.buffer && !isMusicPlaying) {
-        try {
-          audioSound.play();
-          isMusicPlaying = true;
-          const btn = document.getElementById('music-btn');
-          if (btn) btn.classList.remove('muted');
-        } catch (e) { /* autoplay blocked; music button is the fallback */ }
+      if (audioSound && !isMusicPlaying) {
+        if (audioSound.buffer) {
+          try {
+            audioSound.play();
+            isMusicPlaying = true;
+            const btn = document.getElementById('music-btn');
+            if (btn) btn.classList.remove('muted');
+          } catch (e) { /* autoplay blocked; music button is the fallback */ }
+        } else {
+          musicWanted = true; // still streaming — starts when loaded
+        }
       }
 
       // Resume audio on first user interaction (autoplay-policy safe).
@@ -255,8 +288,7 @@ function revealScene() {
         window.removeEventListener('pointerdown', resumeAudio);
       };
       window.addEventListener('pointerdown', resumeAudio);
-    }
-  });
+  }
 }
 
 // --- Scene Initialization ---
@@ -294,12 +326,22 @@ function init() {
   audioListener = new THREE.AudioListener();
   camera.add(audioListener);
   audioSound = new THREE.Audio(audioListener);
-  audioLoader = new THREE.AudioLoader(loadingManager);
-  
+  // Deliberately NOT on the loadingManager: music isn't needed until the
+  // reveal, so it streams in parallel without gating the loading screen.
+  audioLoader = new THREE.AudioLoader();
+
   audioLoader.load('sounds/music_loop.mp3', (buffer) => {
     audioSound.setBuffer(buffer);
     audioSound.setLoop(true);
     audioSound.setVolume(0.4);
+    if (musicWanted && !isMusicPlaying) {
+      try {
+        audioSound.play();
+        isMusicPlaying = true;
+        const btn = document.getElementById('music-btn');
+        if (btn) btn.classList.remove('muted');
+      } catch (e) { /* user can use the music button */ }
+    }
   });
 
   // 6. Lights & Environment Setup
@@ -465,7 +507,8 @@ function setupEnvironment() {
 
     console.warn(`[glass] envTexture ready; glass materials registered: ${glassMaterials.length}`);
     console.log("EXR Environment loaded as background successfully!");
-  });
+    setLoadPart('env', 1);
+  }, bytesProgress('env'));
 }
 
 // --- Setup Post-Processing (SSAO ambient occlusion + subtle bloom) ---
@@ -572,7 +615,8 @@ function loadGLTFModels() {
 
     // Scatter wind-swayed grass blades across the lawn (needs groundMesh)
     setupGrass();
-  });
+    setLoadPart('house', 1);
+  }, bytesProgress('house'));
 
   // Load animated Seagull birds — small, high, and circling slowly so they
   // read as a distant flock rather than large birds hovering over the roof.
@@ -604,7 +648,8 @@ function loadGLTFModels() {
       }
     });
     console.log("Birds loaded & animation clip bounds playing.");
-  });
+    setLoadPart('bird', 1);
+  }, bytesProgress('bird'));
 }
 
 // --- Tile/plaster normal map for walls & floors ---
@@ -1470,6 +1515,19 @@ function animate() {
   requestAnimationFrame(animate);
 
   const delta = clock.getDelta();
+
+  // 0. Glide the loading UI toward the true progress (byte-weighted)
+  if (!loaderFinished) {
+    loadShown += (loadTarget - loadShown) * Math.min(1, delta * (loaderDone ? 4.0 : 2.5));
+    if (loaderDone && loadShown > 0.995) loadShown = 1;
+    updateLoaderUI(loadShown);
+    if (loadShown >= 1) {
+      loaderFinished = true;
+      if (loaderText) loaderText.innerText = 'Ready';
+      if (loaderOverlay) loaderOverlay.classList.add('complete'); // sketch turns gold
+      setTimeout(revealScene, 800); // beat on the gold sketch, then reveal
+    }
+  }
 
   // 1. Update controls (skipped while the intro animation owns the camera —
   // controls.update() would force lookAt(controls.target) every frame)

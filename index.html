@@ -62,15 +62,29 @@
       .loader-blueprint path { fill: none; stroke-dasharray: 1; stroke-dashoffset: 1; }
       .loader-horizon { position: relative; width: 100%; height: 1px;
         background: rgba(255,255,255,0.14); margin: 34px 0 16px; }
-      .loader-horizon-fill { position: absolute; top: 0; left: 0; height: 1px; width: 0%;
+      .loader-horizon-fill { position: absolute; top: 0; left: 0; height: 1px; width: 12%;
         background: #C5A07F; }
-      .loader-sun { position: absolute; left: 0%; top: 50%; transform: translate(-50%,-50%);
+      .loader-sun { position: absolute; left: 12%; top: 50%; transform: translate(-50%,-50%);
         width: 9px; height: 9px; border-radius: 50%; background: #ffd59a;
-        box-shadow: 0 0 16px 5px rgba(255,180,100,0.55); }
+        box-shadow: 0 0 16px 5px rgba(255,180,100,0.55);
+        animation: sunBreathe 1.8s ease-in-out infinite alternate; }
+      @keyframes sunBreathe {
+        from { box-shadow: 0 0 12px 3px rgba(255,180,100,0.4); }
+        to   { box-shadow: 0 0 24px 8px rgba(255,180,100,0.75); } }
       .loader-meta { display: flex; align-items: baseline; justify-content: space-between; }
       .loader-meta p { margin: 0; }
       .loader-meta #loaderText { font-size: 10px; font-weight: 600; letter-spacing: 0.22em;
-        text-transform: uppercase; color: rgba(255,255,255,0.45); }
+        text-transform: uppercase; color: rgba(255,255,255,0.45);
+        position: relative; height: 13px; width: 240px; text-align: left; }
+      #loaderText span { position: absolute; left: 0; top: 0; opacity: 0;
+        animation: loaderPhrase 10s infinite; }
+      #loaderText span:nth-child(2) { animation-delay: 2.5s; }
+      #loaderText span:nth-child(3) { animation-delay: 5s; }
+      #loaderText span:nth-child(4) { animation-delay: 7.5s; }
+      @keyframes loaderPhrase {
+        0% { opacity: 0; }
+        5%, 21% { opacity: 1; }
+        26%, 100% { opacity: 0; } }
       .loader-percent { font-family: 'Libre Baskerville', Georgia, serif; font-style: italic;
         font-size: 30px; line-height: 1; color: #C5A07F; }
       .hidden { display: none !important; }
@@ -107,8 +121,15 @@
         </div>
 
         <div class="loader-meta">
-          <p id="loaderText">Preparing the villa</p>
-          <p class="loader-percent"><span id="loaderPercent">0</span>%</p>
+          <!-- CSS-only phrase rotation: keeps the screen alive even before
+               the JS bundle arrives (when progress can't tick yet) -->
+          <p id="loaderText">
+            <span>Waking the sun</span>
+            <span>Pouring the pool</span>
+            <span>Planting the meadow</span>
+            <span>Polishing the glass</span>
+          </p>
+          <p class="loader-percent"><span id="loaderPercent">12</span>%</p>
         </div>
 
         <button id="btn-continue-explore" class="hidden">

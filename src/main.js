@@ -188,7 +188,7 @@ function revealScene() {
           audioSound.play();
           isMusicPlaying = true;
           const btn = document.getElementById('music-btn');
-          if (btn) btn.innerText = "🔊";
+          if (btn) btn.classList.remove('muted');
         } catch (e) { /* autoplay blocked; music button is the fallback */ }
       }
 
@@ -593,7 +593,7 @@ function setupWater() {
     sizeZ = size.z;
     // Sit the water surface a little below the top of the pool basin so the
     // concrete lip rises above the waterline (like a real pool).
-    const WATER_DROP = 0.45; // lower = water sits deeper in the basin
+    const WATER_DROP = 0.47; // lower = water sits deeper in the basin
     poolPosition.set(center.x, box.max.y - WATER_DROP, center.z);
 
     // (The GLB already has its own pool wall — it just looked black before the
@@ -777,12 +777,11 @@ function bindUIEvents() {
     if (isMusicPlaying) {
       audioSound.pause();
       isMusicPlaying = false;
-      musicBtn.innerText = "🔇";
     } else {
       audioSound.play();
       isMusicPlaying = true;
-      musicBtn.innerText = "🔊";
     }
+    musicBtn.classList.toggle('muted', !isMusicPlaying);
     track('music_toggle', { state: isMusicPlaying ? 'on' : 'off' });
   });
 
@@ -830,13 +829,6 @@ function bindUIEvents() {
     gsap.to(sunLight.color, { r: 1.0, g: 0.81, b: 0.54, duration: 1.5 }); // warm gold
     gsap.to(sunLight, { intensity: 7.2, duration: 1.5 });
     track('sun_preset', { preset: 'sunset' });
-  });
-
-  // Main scroll button - flies camera to first hotspot (Stairs)
-  document.getElementById('button-scroll').addEventListener('click', () => {
-    const pt = hotspots[0];
-    flyToTarget(pt.camPos, pt.lookAt);
-    track('explore_click', { view_name: pt.name });
   });
 
   // Post-processing switch (SSAO + bloom)

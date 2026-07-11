@@ -219,10 +219,12 @@ body, html {
 }
 
 #music-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   background: none;
   border: none;
   color: var(--color-white);
-  font-size: 18px;
   cursor: pointer;
   opacity: 0.7;
   transition: opacity 0.3s;
@@ -230,6 +232,18 @@ body, html {
 #music-btn:hover {
   opacity: 1;
 }
+#music-btn svg {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+#music-btn .icon-sound-off { display: none; }
+#music-btn.muted .icon-sound-on { display: none; }
+#music-btn.muted .icon-sound-off { display: block; }
 
 /* Drawers - Side Panels (Customize + About) */
 .drawer {
@@ -525,31 +539,6 @@ body, html {
   font-family: var(--font-serif);
   font-style: italic;
   font-weight: 100;
-}
-
-#button-scroll {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  cursor: pointer;
-}
-
-#button-scroll p {
-  font-family: var(--font-sans);
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.15em;
-  width: 170px;
-  line-height: 1.6;
-  opacity: 0.8;
-}
-
-#button-scroll svg {
-  transition: transform 0.3s;
-}
-
-#button-scroll:hover svg {
-  transform: translateY(4px);
 }
 
 /* View Navigator — Apple Dock-style icon rail on the right edge */

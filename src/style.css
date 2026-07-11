@@ -37,14 +37,17 @@ body, html {
   z-index: 1;
 }
 
-/* Loader Screen Overlay */
+/* Loader Screen Overlay — dawn horizon */
 .loader-overlay {
   position: fixed;
   top: 0;
   left: 0;
   width: 100%;
   height: 100%;
-  background-color: #0b0f19;
+  /* faint warmth low on the "horizon" of the screen */
+  background:
+    radial-gradient(130% 90% at 50% 105%, rgba(58, 42, 24, 0.55) 0%, rgba(11, 15, 25, 0) 55%),
+    #0b0f19;
   z-index: 100;
   display: flex;
   justify-content: center;
@@ -54,75 +57,89 @@ body, html {
 
 .loader-content {
   text-align: center;
-  max-width: 400px;
+  max-width: 420px;
   width: 90%;
 }
 
-/* Loading Spinner - lds-roller */
-.lds-roller {
-  display: inline-block;
-  position: relative;
-  width: 80px;
-  height: 80px;
-  margin-bottom: 24px;
-}
-.lds-roller div {
-  animation: lds-roller 1.2s cubic-bezier(0.5, 0, 0.5, 1) infinite;
-  transform-origin: 40px 40px;
-}
-.lds-roller div:after {
-  content: " ";
-  display: block;
-  position: absolute;
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--color-light-sand);
-  margin: -4px 0 0 -4px;
-}
-.lds-roller div:nth-child(1) { animation-delay: -0.036s; }
-.lds-roller div:nth-child(1):after { top: 63px; left: 63px; }
-.lds-roller div:nth-child(2) { animation-delay: -0.072s; }
-.lds-roller div:nth-child(2):after { top: 68px; left: 56px; }
-.lds-roller div:nth-child(3) { animation-delay: -0.108s; }
-.lds-roller div:nth-child(3):after { top: 71px; left: 48px; }
-.lds-roller div:nth-child(4) { animation-delay: -0.144s; }
-.lds-roller div:nth-child(4):after { top: 72px; left: 40px; }
-.lds-roller div:nth-child(5) { animation-delay: -0.18s; }
-.lds-roller div:nth-child(5):after { top: 71px; left: 32px; }
-.lds-roller div:nth-child(6) { animation-delay: -0.216s; }
-.lds-roller div:nth-child(6):after { top: 68px; left: 24px; }
-.lds-roller div:nth-child(7) { animation-delay: -0.252s; }
-.lds-roller div:nth-child(7):after { top: 63px; left: 17px; }
-.lds-roller div:nth-child(8) { animation-delay: -0.288s; }
-.lds-roller div:nth-child(8):after { top: 56px; left: 12px; }
-@keyframes lds-roller {
-  0% { transform: rotate(0deg); }
-  100% { transform: rotate(360deg); }
-}
-
-.loading-bar-container {
-  width: 100%;
-  height: 2px;
-  background-color: rgba(255, 255, 255, 0.1);
-  margin: 16px 0;
-  border-radius: 4px;
-  overflow: hidden;
-}
-
-.loading-bar {
-  height: 100%;
-  width: 0%;
-  background-color: var(--color-light-sand);
-  transition: width 0.3s ease;
-}
-
-#loading-text-intro {
+.loader-eyebrow {
   font-family: var(--font-sans);
-  font-size: 11px;
-  letter-spacing: 0.2em;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.34em;
   text-transform: uppercase;
   color: var(--color-light-sand);
+  margin-bottom: 14px;
+}
+
+.loader-title {
+  font-family: var(--font-serif);
+  font-size: 52px;
+  line-height: 1.05;
+  font-weight: 700;
+  color: var(--color-white);
+  letter-spacing: -0.01em;
+}
+
+.loader-title em {
+  font-style: italic;
+  font-weight: 400;
+  color: rgba(255, 255, 255, 0.85);
+}
+
+/* The horizon: a hairline the sun travels along as assets load */
+.loader-horizon {
+  position: relative;
+  width: 100%;
+  height: 1px;
+  background: rgba(255, 255, 255, 0.14);
+  margin: 52px 0 16px;
+}
+
+.loader-horizon-fill {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 1px;
+  width: 0%;
+  background: linear-gradient(to right, rgba(197, 160, 127, 0.15), var(--color-light-sand));
+  transition: width 0.35s ease;
+}
+
+.loader-sun {
+  position: absolute;
+  left: 0%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #ffd59a;
+  box-shadow: 0 0 16px 5px rgba(255, 180, 100, 0.55);
+  transition: left 0.35s ease;
+}
+
+.loader-meta {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.loader-meta #loaderText {
+  font-family: var(--font-sans);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.loader-percent {
+  font-family: var(--font-serif);
+  font-style: italic;
+  font-size: 30px;
+  line-height: 1;
+  color: var(--color-light-sand);
+  font-variant-numeric: tabular-nums;
 }
 
 #btn-continue-explore {

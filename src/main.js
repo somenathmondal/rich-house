@@ -5,6 +5,14 @@ import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
 import { EXRLoader } from 'three/examples/jsm/loaders/EXRLoader.js';
 import { Water } from 'three/examples/jsm/objects/Water.js';
 import { Lensflare, LensflareElement } from 'three/examples/jsm/objects/Lensflare.js';
+import { MeshSurfaceSampler } from 'three/examples/jsm/math/MeshSurfaceSampler.js';
+import { computeBoundsTree, disposeBoundsTree, acceleratedRaycast } from 'three-mesh-bvh';
+
+// Accelerated raycasting (BVH) — used during grass placement so 35k
+// coverage rays resolve in log-time instead of brute-force triangle tests.
+THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
+THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
+THREE.Mesh.prototype.raycast = acceleratedRaycast;
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { SSAOPass } from 'three/examples/jsm/postprocessing/SSAOPass.js';
@@ -19,11 +27,12 @@ import './style.css';
 let scene, camera, renderer, controls;
 let sunLight, sunHelper;
 let waterPlane;
+let introActive = false; // while true, the intro owns the camera (controls.update() skipped)
 let mixers = []; // For bird animations
 let birdFlights = []; // Circling flight paths for the birds
 let elapsedTime = 0; // Accumulated scene time (drives flight paths)
 let clock = new THREE.Clock();
-let isPostProcessingEnabled = false;
+let isPostProcessingEnabled = true; // SSAO + bloom + SMAA on by default
 
 // --- Post-processing ---
 let composer, ssaoPass, bloomPass;
@@ -33,6 +42,8 @@ let poolSurfaceMesh = null; // baked tiled pool surface, replaced by Water shade
 
 // --- Grass ---
 let grassMaterials = []; // lawn materials, tunable via the debug panel
+let groundMesh = null;   // the Ground terrain mesh — grass blades sample its surface
+let grassShader = null;  // wind shader handle (uTime driven from the render loop)
 
 // --- Glass ---
 // Glass materials get the HDRI as their envMap (applied per-material, NOT via
@@ -82,7 +93,7 @@ const hotspots = [
   { id: 5, name: "Top Living Room", position: new THREE.Vector3(0.5, 4.2, 1.5), camPos: new THREE.Vector3(4.1, 1.9, -3.3), lookAt: new THREE.Vector3(6.3, 0.1, 5.8) },
   { id: 6, name: "Right Pool", position: new THREE.Vector3(11, 0.4, -3), camPos: new THREE.Vector3(15.1, 1.7, 25.3), lookAt: new THREE.Vector3(-0.7, -0.4, 9.9) },
   // Default view — matches the initial camera position/target from init()
-  { id: 7, name: "Default View", position: new THREE.Vector3(0, 2, 0), camPos: new THREE.Vector3(28, 14, 32), lookAt: new THREE.Vector3(0, 2, 0) }
+  { id: 7, name: "Default View", position: new THREE.Vector3(0, 2, 0), camPos: new THREE.Vector3(26.7, 13.0, 33.5), lookAt: new THREE.Vector3(-0.5, -3.8, 3.0) }
 ];
 
 // --- Audio Player ---
@@ -139,17 +150,22 @@ function track(eventName, params = {}) {
 const loadingManager = new THREE.LoadingManager();
 const loaderBar = document.getElementById('loadingBar');
 const loaderText = document.getElementById('loaderText');
+const loaderSun = document.getElementById('loaderSun');
+const loaderPercent = document.getElementById('loaderPercent');
 const loaderOverlay = document.getElementById('loaderOverlay');
 const continueBtn = document.getElementById('btn-continue-explore');
 
 loadingManager.onProgress = (url, itemsLoaded, itemsTotal) => {
   const progress = Math.round((itemsLoaded / itemsTotal) * 100);
   if (loaderBar) loaderBar.style.width = `${progress}%`;
-  if (loaderText) loaderText.style.innerText = `Loading Seashore House... ${progress}%`;
+  if (loaderSun) loaderSun.style.left = `${progress}%`;   // the sun rises along the horizon
+  if (loaderPercent) loaderPercent.textContent = progress;
 };
 
 loadingManager.onLoad = () => {
-  if (loaderText) loaderText.innerText = "Loaded! Ready to explore.";
+  // performance.now() is ms since navigation start = total time to all assets
+  console.warn(`[load] all assets loaded in ${(performance.now() / 1000).toFixed(2)}s`);
+  if (loaderText) loaderText.innerText = "Ready";
   // Skip the "Explore Scene" gate — reveal the 3D scene automatically.
   revealScene();
 };
@@ -160,16 +176,47 @@ function revealScene() {
   if (!loaderOverlay || loaderOverlay.dataset.revealed === 'true') return;
   loaderOverlay.dataset.revealed = 'true';
 
-  // Cinematic intro: start far out and high, then dolly in to the default
-  // view as the overlay fades. Controls stay locked until the move lands.
+  // Cinematic intro: rotate from the Back View around the house to the
+  // Default View — a ~138° orbital sweep about the default look-at pivot.
+  // Controls stay locked until it lands.
   controls.enabled = false;
-  camera.position.set(64, 34, 74);
-  gsap.to(camera.position, {
-    x: 28, y: 14, z: 32,
-    duration: 3.4,
-    ease: 'power3.inOut',
-    onUpdate: () => camera.lookAt(controls.target),
-    onComplete: () => { controls.enabled = true; }
+  introActive = true; // stop controls.update() from stomping the intro camera
+  const defaultPt = hotspots.find((h) => h.name === 'Default View');
+  const backPt = hotspots.find((h) => h.name === 'Back View');
+  const pivot = defaultPt.lookAt.clone();
+
+  const endSph = new THREE.Spherical().setFromVector3(defaultPt.camPos.clone().sub(pivot));
+  const sph = new THREE.Spherical().setFromVector3(backPt.camPos.clone().sub(pivot));
+  // Take the short way around the house
+  const dTheta = endSph.theta - sph.theta;
+  if (dTheta > Math.PI) sph.theta += Math.PI * 2;
+  else if (dTheta < -Math.PI) sph.theta -= Math.PI * 2;
+
+  // The look-at eases from Back View's own target to the default pivot, so
+  // the first frame matches the Back View button's framing exactly and the
+  // last frame matches the Default View exactly.
+  const lookProgress = { t: 0 };
+  const lookPoint = new THREE.Vector3();
+  const applyIntroCam = () => {
+    camera.position.setFromSpherical(sph).add(pivot);
+    lookPoint.lerpVectors(backPt.lookAt, pivot, lookProgress.t);
+    camera.lookAt(lookPoint);
+  };
+  applyIntroCam();
+  // Hold the Back View for a beat, then rotate slowly around to the default.
+  gsap.to(lookProgress, { t: 1, duration: 7.0, delay: 2.0, ease: 'power2.inOut' });
+  gsap.to(sph, {
+    radius: endSph.radius,
+    phi: endSph.phi,
+    theta: endSph.theta,
+    duration: 7.0,
+    delay: 2.0,
+    ease: 'power2.inOut',
+    onUpdate: applyIntroCam,
+    onComplete: () => {
+      introActive = false;
+      controls.enabled = true;
+    }
   });
 
   gsap.to(loaderOverlay, {
@@ -178,8 +225,8 @@ function revealScene() {
     onComplete: () => {
       loaderOverlay.style.display = 'none';
 
-      // Fade in main logo title splash (timed to land with the camera)
-      gsap.fromTo('#section-logo', { opacity: 0, y: 30 }, { opacity: 1, y: 0, duration: 1.4, delay: 1.2 });
+      // Fade in main logo title splash (timed to land late in the sweep)
+      gsap.fromTo('#section-logo', { opacity: 0, y: 30 }, { opacity: 1, y: 0, duration: 1.4, delay: 5.5 });
 
       // Try to start ambient music. Browsers keep the AudioContext suspended
       // until a user gesture, so it may stay silent until the first click.
@@ -213,7 +260,7 @@ function init() {
 
   // 2. Camera Setup
   camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
-  camera.position.set(28, 14, 32); // Default starting position
+  camera.position.set(26.7, 13.0, 33.5); // Default View (captured)
 
   // 3. Renderer Setup
   renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: "high-performance" });
@@ -232,7 +279,7 @@ function init() {
   controls.maxPolarAngle = Math.PI / 2 - 0.05; // Prevent camera going below ground
   controls.minDistance = 3;
   controls.maxDistance = 80;
-  controls.target.set(0, 2, 0);
+  controls.target.set(-0.5, -3.8, 3.0); // Default View look-at (captured)
 
   // 5. Audio Setup
   audioListener = new THREE.AudioListener();
@@ -433,7 +480,7 @@ function setupPostProcessing() {
   composer.addPass(ssaoPass);
 
   // Subtle bloom — only the brightest highlights (sun glints, sky) glow.
-  bloomPass = new UnrealBloomPass(new THREE.Vector2(w, h), 0.25, 0.4, 0.9);
+  bloomPass = new UnrealBloomPass(new THREE.Vector2(w, h), 0.10, 0.4, 0.9);
   composer.addPass(bloomPass);
 
   // OutputPass applies tone mapping + output color space near the end.
@@ -492,7 +539,9 @@ function loadGLTFModels() {
           child.material.envMapIntensity = 0.4; // keep the lawn matte
           child.material.needsUpdate = true;
           grassMaterials.push(child.material);
+          groundMesh = child; // blades are scattered across this surface
         }
+
 
         // Water fix: capture the baked tiled-cyan pool surface so we can hide
         // it and replace it with a real reflective Water shader (like the
@@ -511,6 +560,9 @@ function loadGLTFModels() {
     
     // Setup water plane after house model loads (aligning to pool location)
     setupWater();
+
+    // Scatter wind-swayed grass blades across the lawn (needs groundMesh)
+    setupGrass();
   });
 
   // Load animated Seagull birds — small, high, and circling slowly so they
@@ -569,6 +621,412 @@ function applyWallNormal(material, repeat = 20, scale = 1.0) {
   material.normalScale = new THREE.Vector2(scale, scale);
   material.needsUpdate = true;
   if (!wallMaterials.includes(material)) wallMaterials.push(material);
+}
+
+// --- Procedural Ghibli Grass (ported from the feed-panda project) ---
+// Instanced grass blades scattered over the Ground mesh surface, with a
+// custom wind shader: travelling gusts, per-blade turbulence and flutter,
+// two-tone colour gradients broken up by noise patches, translucent
+// backlight and a fresnel rim.
+function setupGrass() {
+  if (!groundMesh) {
+    console.warn('[grass] no Ground mesh found — skipping blade scatter');
+    return;
+  }
+
+  const noiseMap = new THREE.TextureLoader(loadingManager).load('textures/perlin.webp');
+  noiseMap.wrapS = THREE.RepeatWrapping;
+  noiseMap.wrapT = THREE.RepeatWrapping;
+
+  const grassLoader = new GLTFLoader(loadingManager);
+  grassLoader.load('models/grass-blades-up.glb', (gltf) => {
+    let grassGeo = null;
+    gltf.scene.traverse((child) => {
+      if (child.isMesh && !grassGeo) grassGeo = child.geometry;
+    });
+    if (!grassGeo) {
+      console.error('[grass] could not find geometry in grass GLB');
+      return;
+    }
+
+    const bBox = new THREE.Box3().setFromObject(gltf.scene);
+    const bSize = new THREE.Vector3();
+    bBox.getSize(bSize);
+    const bladeHeight = bSize.y || 0.35;
+
+    const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || window.innerWidth < 768;
+    const GRASS_COUNT = isMobile ? 15000 : 35000;
+    const BLADE_SCALE = 0.5; // rich-house world units are larger than feed-panda's
+
+    const grassMat = new THREE.MeshStandardMaterial({
+      color: 0xffffff,
+      roughness: 0.85,
+      metalness: 0.0,
+      side: THREE.DoubleSide,
+      transparent: true, // translucent Ghibli look
+      opacity: 0.85
+    });
+
+    grassMat.onBeforeCompile = (shader) => {
+      shader.uniforms.uTime = { value: 0 };
+      shader.uniforms.uNoiseMap = { value: noiseMap };
+      shader.uniforms.uWindStrength = { value: 0.25 };
+      shader.uniforms.uWindSpeed = { value: 2.0 };
+      shader.uniforms.uWindAngle = { value: 45.0 };
+      shader.uniforms.uGustScale = { value: 0.5 };
+      shader.uniforms.uTurbulence = { value: 0.28 };
+      shader.uniforms.uFlutter = { value: 0.28 };
+      shader.uniforms.uHeightVariation = { value: 0.5 };
+      shader.uniforms.uHeightNoiseScale = { value: 0.15 };
+      shader.uniforms.uRootColor = { value: new THREE.Color('#325222') };
+      shader.uniforms.uTipColor = { value: new THREE.Color('#7eb529') };
+      shader.uniforms.uRootColorB = { value: new THREE.Color('#5d8046') };
+      shader.uniforms.uTipColorB = { value: new THREE.Color('#c8cf56') };
+      shader.uniforms.uColorVariation = { value: 0.5 };
+      shader.uniforms.uColorPatchScale = { value: 0.7 };
+      shader.uniforms.uMacroVariation = { value: 0.48 };
+      shader.uniforms.uMacroScale = { value: 0.115 };
+      shader.uniforms.uBladeHeight = { value: bladeHeight };
+
+      grassMat.userData.shader = shader;
+      grassShader = shader;
+
+      shader.vertexShader = shader.vertexShader.replace(
+        '#include <common>',
+        `#include <common>
+         varying vec3 vWorldPosition;
+         varying float vHeightAlongBlade;
+         varying float vInstanceSeed;
+
+         uniform float uTime;
+         uniform sampler2D uNoiseMap;
+         uniform float uWindStrength;
+         uniform float uWindSpeed;
+         uniform float uWindAngle;
+         uniform float uGustScale;
+         uniform float uTurbulence;
+         uniform float uFlutter;
+         uniform float uHeightVariation;
+         uniform float uHeightNoiseScale;
+         uniform float uBladeHeight;
+
+         attribute vec2 aOrigin;
+         attribute vec2 aFacing;
+
+         float hash(float n) {
+             return fract(sin(n) * 43758.5453123);
+         }
+         float hash(vec2 p) {
+             return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
+         }
+
+         vec3 getWindSway(vec3 localPos, vec2 origin, vec2 facing, float timeVal, float index) {
+             float height = uBladeHeight;
+             float t = clamp(localPos.y / height, 0.0, 1.0);
+
+             float bladeSeed = hash(index);
+             float bladePhase = bladeSeed * 6.2831853;
+             float ampVar = 0.65 + hash(index + 7.0) * 0.7;
+
+             float baseAngle = uWindAngle * (3.14159265 / 180.0);
+             float wobble = sin(timeVal * uWindSpeed * 0.6 + bladePhase) * uTurbulence * 0.4;
+             float angle = baseAngle + wobble;
+             vec2 windDir = vec2(cos(angle), sin(angle));
+             vec2 perpDir = vec2(-windDir.y, windDir.x);
+
+             float along = dot(origin, windDir);
+
+             vec2 noiseUV = origin * 0.03;
+             float noiseVal = texture2D(uNoiseMap, noiseUV).r;
+             float noiseJitter = (noiseVal - 0.5) * 2.0;
+
+             float gustPhase = along * uGustScale - timeVal * uWindSpeed * 0.6 + noiseJitter * 1.5;
+             float gust = pow(sin(gustPhase) * 0.5 + 0.5, 1.6);
+
+             float chopPhase = along * (uGustScale * 2.7) - timeVal * uWindSpeed * 1.3 + bladePhase;
+             float chop = sin(chopPhase) * 0.5 + 0.5;
+
+             float intensity = (0.25 + gust * 0.85 + chop * 0.18) * ampVar;
+
+             float BEND_GAIN = 3.0;
+             float phi = clamp(uWindStrength * intensity * BEND_GAIN, 0.0, 1.6);
+
+             float bendExponent = 1.5;
+             float shaped = pow(t, bendExponent);
+             float a = phi * shaped;
+             float safePhi = max(phi, 0.001);
+             float R = height / safePhi;
+             float u = R * (1.0 - cos(a));
+             float dv = R * sin(a) - localPos.y;
+
+             float flutterMask = smoothstep(0.55, 1.0, t);
+             float flutterPhase = timeVal * 10.0 + bladeSeed * 3.0 + along * 0.8;
+             float flutterAmt = sin(flutterPhase) * uFlutter * 0.08 * flutterMask;
+
+             vec2 horiz = windDir * u + perpDir * flutterAmt;
+
+             float cosY = facing.x;
+             float sinY = facing.y;
+             float localX = horiz.x * cosY - horiz.y * sinY;
+             float localZ = horiz.x * sinY + horiz.y * cosY;
+
+             return vec3(localX, dv, localZ);
+         }
+        `
+      );
+
+      shader.vertexShader = shader.vertexShader.replace(
+        '#include <begin_vertex>',
+        `#include <begin_vertex>
+         float instanceIdx = float(gl_InstanceID);
+         vec3 sway = getWindSway(position, aOrigin, aFacing, uTime, instanceIdx);
+
+         float hNoise = hash(aOrigin + vec2(53.0, 17.0));
+         float hFactor = clamp(1.0 + (hNoise - 0.5) * 2.0 * uHeightVariation, 0.2, 1.8);
+
+         vec3 swayed = position + sway;
+         transformed = vec3(swayed.x, swayed.y * hFactor, swayed.z);
+         vInstanceSeed = hash(instanceIdx + 13.37);
+        `
+      );
+
+      shader.vertexShader = shader.vertexShader.replace(
+        '#include <project_vertex>',
+        `#include <project_vertex>
+         #ifdef USE_INSTANCING
+             vWorldPosition = ( instanceMatrix * vec4( swayed, 1.0 ) ).xyz;
+             vWorldPosition.y *= hFactor;
+             vWorldPosition = ( modelMatrix * vec4( vWorldPosition, 1.0 ) ).xyz;
+         #else
+             vWorldPosition = ( modelMatrix * vec4( swayed, 1.0 ) ).xyz;
+             vWorldPosition.y *= hFactor;
+         #endif
+         vHeightAlongBlade = clamp(position.y / uBladeHeight, 0.0, 1.0);
+        `
+      );
+
+      shader.fragmentShader = shader.fragmentShader.replace(
+        '#include <common>',
+        `#include <common>
+         varying vec3 vWorldPosition;
+         varying float vHeightAlongBlade;
+         varying float vInstanceSeed;
+
+         uniform float uTime;
+         uniform sampler2D uNoiseMap;
+         uniform vec3 uRootColor;
+         uniform vec3 uTipColor;
+         uniform vec3 uRootColorB;
+         uniform vec3 uTipColorB;
+         uniform float uColorVariation;
+         uniform float uColorPatchScale;
+         uniform float uMacroVariation;
+         uniform float uMacroScale;
+        `
+      );
+
+      shader.fragmentShader = shader.fragmentShader.replace(
+        '#include <normal_fragment_begin>',
+        `#include <normal_fragment_begin>
+         vec3 skyNormalWorld = (vec4(normal, 0.0) * viewMatrix).xyz;
+         skyNormalWorld = normalize(vec3(skyNormalWorld.x, abs(skyNormalWorld.y), skyNormalWorld.z));
+         normal = normalize( ( viewMatrix * vec4(skyNormalWorld, 0.0) ).xyz );
+         #ifdef DOUBLE_SIDED
+             normal = normal * ( float( gl_FrontFacing ) * 2.0 - 1.0 );
+         #endif
+        `
+      );
+
+      shader.fragmentShader = shader.fragmentShader.replace(
+        '#include <color_fragment>',
+        `#include <color_fragment>
+         float gradT = pow(vHeightAlongBlade, 1.4);
+         vec3 gradientA = mix(uRootColor, uTipColor, gradT);
+         vec3 gradientB = mix(uRootColorB, uTipColorB, gradT);
+
+         vec2 patchUV = vWorldPosition.xz * uColorPatchScale * 0.25;
+         float patchNoise = texture2D(uNoiseMap, patchUV).r;
+         float patchBlend = clamp(patchNoise * uColorVariation, 0.0, 1.0);
+         vec3 baseColor = mix(gradientA, gradientB, patchBlend);
+
+         vec2 macroUV = (vWorldPosition.xz + vec2(137.0, 91.0)) * uMacroScale * 0.15;
+         float macroNoise = texture2D(uNoiseMap, macroUV).r;
+         float macroFactor = 1.0 + (macroNoise - 0.5) * 2.0 * uMacroVariation;
+
+         float brightness = mix(0.85, 1.15, vInstanceSeed);
+         vec3 finalColor = baseColor * macroFactor * brightness;
+         diffuseColor = vec4( finalColor, opacity );
+        `
+      );
+
+      shader.fragmentShader = shader.fragmentShader.replace(
+        '#include <emissivemap_fragment>',
+        `#include <emissivemap_fragment>
+         vec3 sunDir = vec3(0.4243, 0.7071, 0.5657); // World-space sun direction
+         vec3 viewDir = normalize(cameraPosition - vWorldPosition);
+
+         float transDistortion = 0.5;
+         vec3 transLightDir = normalize(sunDir + skyNormalWorld * transDistortion);
+         float backLight = pow(max(dot(viewDir, -transLightDir), 0.0), 3.0);
+         float thicknessMask = pow(vHeightAlongBlade, 1.5);
+         vec3 translucencyColor = vec3(207.0/255.0, 224.0/255.0, 106.0/255.0);
+         vec3 translucency = translucencyColor * backLight * thicknessMask * 1.2;
+
+         float fresnelVal = pow(1.0 - max(dot(skyNormalWorld, viewDir), 0.0), 4.0);
+         vec3 fresnelColor = vec3(234.0/255.0, 242.0/255.0, 192.0/255.0);
+         vec3 fresnelRim = fresnelColor * fresnelVal * 0.25;
+
+         totalEmissiveRadiance += (translucency + fresnelRim);
+        `
+      );
+    };
+
+    // --- Scatter blades across the actual Ground surface ---
+    // MeshSurfaceSampler picks points on the lawn geometry itself, so the
+    // pool cut-out, deck and slopes are respected automatically.
+    groundMesh.updateWorldMatrix(true, false);
+    const sampler = new MeshSurfaceSampler(groundMesh).build();
+    const samplePos = new THREE.Vector3();
+
+    // Reject samples hidden under anything sitting on the lawn (stepping
+    // tiles, rocks, deck, statues…): collect every mesh whose bounds overlap
+    // the lawn near ground level, then cast a short ray straight up from
+    // each sampled point — a hit means no blade there.
+    houseMesh.updateWorldMatrix(true, true);
+    const groundBox = new THREE.Box3().setFromObject(groundMesh);
+    const obstacles = [];
+    houseMesh.traverse((c) => {
+      if (!c.isMesh || c === groundMesh) return;
+      const n = c.name.toLowerCase();
+      if (n.startsWith('plane034') || n.startsWith('tree')) return; // tufts/trees are fine
+      const b = new THREE.Box3().setFromObject(c);
+      if (!b.intersectsBox(groundBox)) return;      // nowhere near the lawn
+      if (b.min.y > groundBox.max.y + 1.0) return;  // floats high above it (roof slabs)
+      obstacles.push(c);
+    });
+    console.warn(`[grass] blade-blocking obstacles: ${obstacles.map((o) => o.name || o.type).join(', ')}`);
+
+    // Precompute obstacle bounds once — the placement loop only raycasts
+    // against obstacles whose box actually contains the sample point, which
+    // keeps 35k-sample placement fast instead of blocking the loader.
+    const obstacleBoxes = obstacles.map((o) => new THREE.Box3().setFromObject(o));
+
+    // Build BVHs so each coverage ray is a log-time lookup (one-time cost).
+    const tBvh = performance.now();
+    obstacles.forEach((o) => {
+      if (o.geometry && !o.geometry.boundsTree) o.geometry.computeBoundsTree();
+    });
+    console.warn(`[grass] BVH build: ${(performance.now() - tBvh).toFixed(0)}ms for ${obstacles.length} obstacles`);
+
+    // The pool-rim wall top is a thin strip at water height along the water's
+    // bounding-box edge (where the stairs meet the pool) — blades there read
+    // as growing out of the coping. Cull a narrow band around that edge, at
+    // water height only, so lawns above/below the pool level are untouched.
+    const waterBox = waterPlane ? new THREE.Box3().setFromObject(waterPlane) : null;
+    const RIM = 1.2;
+    function onPoolRim(pos) {
+      if (!waterBox) return false;
+      // Pool-level band: from deep enough that a tall blade could still poke
+      // above the water (~1.8 below) up to just above the coping.
+      if (pos.y < waterBox.max.y - 1.8 || pos.y > waterBox.max.y + 1.0) return false;
+      const inOuter =
+        pos.x > waterBox.min.x - RIM && pos.x < waterBox.max.x + RIM &&
+        pos.z > waterBox.min.z - RIM && pos.z < waterBox.max.z + RIM;
+      const inInner =
+        pos.x > waterBox.min.x + RIM && pos.x < waterBox.max.x - RIM &&
+        pos.z > waterBox.min.z + RIM && pos.z < waterBox.max.z - RIM;
+      return inOuter && !inInner; // in the edge band only
+    }
+
+    const upRay = new THREE.Raycaster();
+    upRay.far = 12;
+    const UP = new THREE.Vector3(0, 1, 0);
+    const rayOrigin = new THREE.Vector3();
+    const candidates = [];
+    function isCovered(pos) {
+      // Water first — pure math, no ray: under the water rectangle = covered.
+      if (waterBox &&
+          pos.y < waterBox.max.y &&
+          pos.x > waterBox.min.x && pos.x < waterBox.max.x &&
+          pos.z > waterBox.min.z && pos.z < waterBox.max.z) {
+        return true;
+      }
+
+      // Only raycast obstacles whose bounding box contains this point.
+      candidates.length = 0;
+      for (let k = 0; k < obstacles.length; k++) {
+        const b = obstacleBoxes[k];
+        if (pos.x >= b.min.x && pos.x <= b.max.x &&
+            pos.z >= b.min.z && pos.z <= b.max.z &&
+            b.max.y > pos.y) {
+          candidates.push(obstacles[k]);
+        }
+      }
+      if (!candidates.length) return false;
+
+      rayOrigin.set(pos.x, pos.y + 0.03, pos.z);
+      upRay.set(rayOrigin, UP);
+      return upRay.intersectObjects(candidates, false).length > 0;
+    }
+
+    const originArray = new Float32Array(GRASS_COUNT * 2);
+    const facingArray = new Float32Array(GRASS_COUNT * 2);
+    const dummy = new THREE.Object3D();
+
+    let _seed = 12345;
+    function seededRandom() {
+      _seed = (_seed * 16807) % 2147483647;
+      return (_seed - 1) / 2147483646;
+    }
+
+    const instancedGrass = new THREE.InstancedMesh(grassGeo, grassMat, GRASS_COUNT);
+    instancedGrass.receiveShadow = true;
+
+    const tPlace = performance.now();
+    for (let i = 0; i < GRASS_COUNT; i++) {
+      // Resample if the point is hidden under a walkway tile (bounded tries)
+      let tries = 0;
+      do {
+        sampler.sample(samplePos);
+        samplePos.applyMatrix4(groundMesh.matrixWorld); // local → world
+      } while ((isCovered(samplePos) || onPoolRim(samplePos)) && ++tries < 8);
+      if (tries >= 8) { // give up on this blade — collapse it to nothing
+        dummy.position.set(0, -100, 0);
+        dummy.scale.setScalar(0.0001);
+        dummy.updateMatrix();
+        instancedGrass.setMatrixAt(i, dummy.matrix);
+        continue;
+      }
+
+      dummy.position.copy(samplePos);
+
+      const angleY = seededRandom() * Math.PI * 2;
+      const bendX = (seededRandom() - 0.5) * 0.1;
+      const bendZ = (seededRandom() - 0.5) * 0.1;
+      dummy.rotation.set(bendX, angleY, bendZ);
+
+      const w = (0.8 + seededRandom() * 0.4) * BLADE_SCALE;
+      const h = (0.8 + seededRandom() * 0.5) * BLADE_SCALE;
+      dummy.scale.set(w, h, w);
+      dummy.updateMatrix();
+      instancedGrass.setMatrixAt(i, dummy.matrix);
+
+      originArray[i * 2 + 0] = samplePos.x;
+      originArray[i * 2 + 1] = samplePos.z;
+      facingArray[i * 2 + 0] = Math.cos(angleY);
+      facingArray[i * 2 + 1] = Math.sin(angleY);
+    }
+
+    grassGeo.setAttribute('aOrigin', new THREE.InstancedBufferAttribute(originArray, 2));
+    grassGeo.setAttribute('aFacing', new THREE.InstancedBufferAttribute(facingArray, 2));
+
+    window._grassMaterial = grassMat;
+    window._grassMesh = instancedGrass;
+    scene.add(instancedGrass);
+    console.warn(`[grass] ${GRASS_COUNT} blades scattered in ${(performance.now() - tPlace).toFixed(0)}ms (blade height ${bladeHeight.toFixed(2)})`);
+  }, undefined, (err) => {
+    console.error('[grass] blade GLB load FAILED:', err);
+  });
 }
 
 // --- Setup Real-Time Water Shader ---
@@ -834,6 +1292,9 @@ function bindUIEvents() {
   // Post-processing switch (SSAO + bloom)
   const ppBtn = document.getElementById('toggle-pp');
   if (ppBtn) {
+    // Reflect the default state (on) in the switch UI
+    ppBtn.classList.toggle('on', isPostProcessingEnabled);
+    ppBtn.setAttribute('aria-checked', String(isPostProcessingEnabled));
     ppBtn.addEventListener('click', () => {
       isPostProcessingEnabled = !isPostProcessingEnabled;
       ppBtn.classList.toggle('on', isPostProcessingEnabled);
@@ -904,10 +1365,28 @@ function setupDebugPanel() {
   });
 
   // Grass
-  const grass = { color: '#5d8046' };
+  const grass = { color: '#5d8046', wind: 0.25, windSpeed: 2.0, tip: '#7eb529', root: '#325222', solid: false };
   const fGrass = pane.addFolder({ title: 'Grass' });
-  fGrass.addBinding(grass, 'color').on('change', (ev) => {
+  fGrass.addBinding(grass, 'color', { label: 'ground' }).on('change', (ev) => {
     grassMaterials.forEach((m) => m.color.set(ev.value));
+  });
+  fGrass.addBinding(grass, 'wind', { min: 0, max: 1, step: 0.01 }).on('change', (ev) => {
+    if (grassShader) grassShader.uniforms.uWindStrength.value = ev.value;
+  });
+  fGrass.addBinding(grass, 'windSpeed', { min: 0, max: 6, step: 0.1, label: 'wind speed' }).on('change', (ev) => {
+    if (grassShader) grassShader.uniforms.uWindSpeed.value = ev.value;
+  });
+  fGrass.addBinding(grass, 'root', { label: 'blade root' }).on('change', (ev) => {
+    if (grassShader) grassShader.uniforms.uRootColor.value.set(ev.value);
+  });
+  fGrass.addBinding(grass, 'tip', { label: 'blade tip' }).on('change', (ev) => {
+    if (grassShader) grassShader.uniforms.uTipColor.value.set(ev.value);
+  });
+  fGrass.addBinding(grass, 'solid', { label: 'solid (perf)' }).on('change', (ev) => {
+    if (window._grassMaterial) {
+      window._grassMaterial.transparent = !ev.value;
+      window._grassMaterial.needsUpdate = true;
+    }
   });
 
   // Water
@@ -953,7 +1432,7 @@ function setupDebugPanel() {
   });
 
   // Post-processing
-  const post = { enabled: false, ssao: 8, bloom: 0.25 };
+  const post = { enabled: true, ssao: 8, bloom: 0.10 };
   const fPost = pane.addFolder({ title: 'Post FX' });
   fPost.addBinding(post, 'enabled', { label: 'post-processing' }).on('change', (ev) => {
     isPostProcessingEnabled = ev.value;
@@ -982,12 +1461,18 @@ function animate() {
 
   const delta = clock.getDelta();
 
-  // 1. Update controls
-  controls.update();
+  // 1. Update controls (skipped while the intro animation owns the camera —
+  // controls.update() would force lookAt(controls.target) every frame)
+  if (!introActive) controls.update();
 
   // 2. Update Water plane uniform timer for flowing ripples
   if (waterPlane) {
     waterPlane.material.uniforms['time'].value += delta * 0.4;
+  }
+
+  // 2b. Drive the grass wind shader
+  if (grassShader) {
+    grassShader.uniforms.uTime.value = elapsedTime;
   }
 
   // 3. Update active bird animation mixers + circling flight paths

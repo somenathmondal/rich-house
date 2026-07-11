@@ -3,7 +3,25 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, user-scalable=no, initial-scale=1, shrink-to-fit=no, minimum-scale=1, maximum-scale=1" />
-    <title>ThreeJS Seashore House | Architectural Visualization</title>
+    <title>Rich House | Real-time 3D Architectural Visualization</title>
+    <meta name="description" content="Walk around a luxury seashore villa in your browser — real-time Three.js with HDRI sunlight, reflective pool water, wind-swayed grass and cinematic camera tours." />
+    <link rel="icon" href="/favicon.ico" sizes="any" />
+
+    <!-- Open Graph (WhatsApp / social link previews) -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Archviz" />
+    <meta property="og:title" content="Rich House — Real-time 3D Architectural Visualization" />
+    <meta property="og:description" content="Walk around a luxury seashore villa in your browser — HDRI sunlight, reflective pool water, wind-swayed grass and cinematic camera tours. Built with Three.js." />
+    <meta property="og:url" content="https://rich-house.vercel.app/" />
+    <meta property="og:image" content="https://rich-house.vercel.app/og-image.jpg" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+
+    <!-- Twitter / X card -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Rich House — Real-time 3D Architectural Visualization" />
+    <meta name="twitter:description" content="Walk around a luxury seashore villa in your browser. Built with Three.js." />
+    <meta name="twitter:image" content="https://rich-house.vercel.app/og-image.jpg" />
 
     <!-- Google tag (gtag.js) -->
     <script async src="https://www.googletagmanager.com/gtag/js?id=G-Y9QDWSFG9P"></script>
@@ -21,18 +39,22 @@
     <link href="https://fonts.googleapis.com/css2?family=Archivo:ital,wght@0,100;0,200;0,600;1,100&family=Libre+Baskerville:wght@700&display=swap" rel="stylesheet">
   </head>
   <body id="body">
-    <!-- Loader Overlay -->
+    <!-- Loader Overlay — the sun rises along the horizon as assets load -->
     <div class="loader-overlay" id="loaderOverlay">
       <div class="loader-content">
-        <div class="lds-roller">
-          <div></div><div></div><div></div><div></div><div></div><div></div><div></div><div></div>
+        <p class="loader-eyebrow">Archviz</p>
+        <h1 class="loader-title">Rich <em>House</em></h1>
+
+        <div class="loader-horizon" aria-hidden="true">
+          <div class="loader-horizon-fill" id="loadingBar"></div>
+          <div class="loader-sun" id="loaderSun"></div>
         </div>
-        <div class="loading-bar-container">
-          <div class="loading-bar" id="loadingBar"></div>
+
+        <div class="loader-meta">
+          <p id="loaderText">Preparing the villa</p>
+          <p class="loader-percent"><span id="loaderPercent">0</span>%</p>
         </div>
-        <div id="loading-text-intro">
-          <p id="loaderText">Loading Seashore House... 0%</p>
-        </div>
+
         <button id="btn-continue-explore" class="hidden">
           Explore Scene
         </button>
@@ -67,7 +89,7 @@
 
       <!-- Main Splash Title (revealed after loading) -->
       <div class="section" id="section-logo">
-        <h1 id="titulo-explorar">Seashore<br><span>House</span></h1>
+        <h1 id="titulo-explorar">Rich<br><span>House</span></h1>
       </div>
 
       <!-- Customize Panel (sun controls + effects toggle) -->
@@ -122,7 +144,7 @@
           <p class="panel-eyebrow">About</p>
           <h2 class="panel-title">A villa, <em>rendered live.</em></h2>
 
-          <p>Seashore House is a real-time architectural visualization built with Three.js &mdash; a recreation of Anderson Mancini&rsquo;s original WebGL showcase.</p>
+          <p>Rich House is a real-time architectural visualization built with Three.js &mdash; a recreation of Anderson Mancini&rsquo;s original WebGL showcase.</p>
           <p>Everything happens in your browser: HDRI sunlight, reflective pool water, circling birds, and cinematic camera travels between rooms. Drag to orbit, scroll to zoom, and use the dock on the right to tour the house.</p>
 
           <ul class="about-links">

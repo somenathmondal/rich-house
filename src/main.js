@@ -155,19 +155,28 @@ const loaderPercent = document.getElementById('loaderPercent');
 const loaderOverlay = document.getElementById('loaderOverlay');
 const continueBtn = document.getElementById('btn-continue-explore');
 
+const loaderBlueprint = document.getElementById('loaderBlueprint');
+
 loadingManager.onProgress = (url, itemsLoaded, itemsTotal) => {
   const progress = Math.round((itemsLoaded / itemsTotal) * 100);
   if (loaderBar) loaderBar.style.width = `${progress}%`;
   if (loaderSun) loaderSun.style.left = `${progress}%`;   // the sun rises along the horizon
   if (loaderPercent) loaderPercent.textContent = progress;
+  if (loaderBlueprint) loaderBlueprint.style.setProperty('--draw', progress / 100); // villa sketches itself
+  if (loaderOverlay) loaderOverlay.style.setProperty('--clear', progress / 100);    // frosted glass lifts
 };
 
 loadingManager.onLoad = () => {
   // performance.now() is ms since navigation start = total time to all assets
   console.warn(`[load] all assets loaded in ${(performance.now() / 1000).toFixed(2)}s`);
   if (loaderText) loaderText.innerText = "Ready";
-  // Skip the "Explore Scene" gate — reveal the 3D scene automatically.
-  revealScene();
+  if (loaderOverlay) {
+    loaderOverlay.style.setProperty('--clear', 1);
+    loaderOverlay.classList.add('complete'); // sketch turns gold
+  }
+  if (loaderBlueprint) loaderBlueprint.style.setProperty('--draw', 1);
+  // Brief beat on the finished gold sketch, then reveal.
+  setTimeout(revealScene, 800);
 };
 
 // Fade out the loading overlay and reveal the scene. Used on auto-load and

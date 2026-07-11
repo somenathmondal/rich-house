@@ -38,6 +38,43 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Archivo:ital,wght@0,100;0,200;0,600;1,100&family=Libre+Baskerville:wght@700&display=swap" rel="stylesheet">
+
+    <!-- Critical inline CSS: styles the loading screen from the very first
+         paint, before the JS/CSS bundles arrive on slow connections. The
+         full stylesheet (bundled) takes over once loaded. -->
+    <style>
+      body { margin: 0; background: #0b0f19; color: #fff; overflow: hidden;
+             font-family: 'Archivo', sans-serif; -webkit-font-smoothing: antialiased; }
+      /* Everything except the loader stays hidden until the bundle's
+         stylesheet arrives (it flips visibility back on) */
+      .ui-container { visibility: hidden; }
+      .loader-overlay { position: fixed; inset: 0; z-index: 100;
+        background: rgba(11, 15, 25, 0.98);
+        display: flex; justify-content: center; align-items: center; }
+      .loader-content { text-align: center; max-width: 420px; width: 90%; }
+      .loader-eyebrow { font-size: 10px; font-weight: 600; letter-spacing: 0.34em;
+        text-transform: uppercase; color: #C5A07F; margin: 0 0 14px; }
+      .loader-title { font-family: 'Libre Baskerville', Georgia, serif;
+        font-size: 52px; line-height: 1.05; font-weight: 700; margin: 0;
+        letter-spacing: -0.01em; }
+      .loader-title em { font-style: italic; font-weight: 400; color: rgba(255,255,255,0.85); }
+      .loader-blueprint { display: block; width: 100%; max-width: 420px; margin: 30px auto 0; }
+      .loader-blueprint path { fill: none; stroke-dasharray: 1; stroke-dashoffset: 1; }
+      .loader-horizon { position: relative; width: 100%; height: 1px;
+        background: rgba(255,255,255,0.14); margin: 34px 0 16px; }
+      .loader-horizon-fill { position: absolute; top: 0; left: 0; height: 1px; width: 0%;
+        background: #C5A07F; }
+      .loader-sun { position: absolute; left: 0%; top: 50%; transform: translate(-50%,-50%);
+        width: 9px; height: 9px; border-radius: 50%; background: #ffd59a;
+        box-shadow: 0 0 16px 5px rgba(255,180,100,0.55); }
+      .loader-meta { display: flex; align-items: baseline; justify-content: space-between; }
+      .loader-meta p { margin: 0; }
+      .loader-meta #loaderText { font-size: 10px; font-weight: 600; letter-spacing: 0.22em;
+        text-transform: uppercase; color: rgba(255,255,255,0.45); }
+      .loader-percent { font-family: 'Libre Baskerville', Georgia, serif; font-style: italic;
+        font-size: 30px; line-height: 1; color: #C5A07F; }
+      .hidden { display: none !important; }
+    </style>
   </head>
   <body id="body">
     <!-- Loader Overlay — the sun rises along the horizon as assets load -->
@@ -45,6 +82,24 @@
       <div class="loader-content">
         <p class="loader-eyebrow">Archviz</p>
         <h1 class="loader-title">Rich <em>House</em></h1>
+
+        <!-- The villa draws itself as assets load (--draw: 0..1) -->
+        <svg id="loaderBlueprint" class="loader-blueprint" viewBox="0 0 440 200" aria-hidden="true"
+             fill="none" stroke="rgba(255,255,255,0.6)" stroke-width="1.4">
+          <path pathLength="1" d="M16 172 H424"/>
+          <path pathLength="1" d="M56 172 V150 H384 V172"/>
+          <path pathLength="1" d="M76 158 q8 5 16 0 t16 0 t16 0 t16 0 t16 0 t16 0"/>
+          <path pathLength="1" d="M118 140 H362 V148 H118 Z"/>
+          <path pathLength="1" d="M136 140V112M156 140V112M176 140V112M196 140V112M216 140V112M236 140V112M256 140V112M276 140V112M296 140V112M316 140V112M336 140V112"/>
+          <path pathLength="1" d="M100 104 H346 V112 H100 Z"/>
+          <path pathLength="1" d="M118 104V76M138 104V76M158 104V76M178 104V76M198 104V76M218 104V76M238 104V76M258 104V76M278 104V76M298 104V76M318 104V76"/>
+          <path pathLength="1" d="M132 68 H330 V76 H132 Z"/>
+          <path pathLength="1" d="M150 68q3-9 6 0M160 68q3-7 6 0M306 68q3-9 6 0M316 68q3-7 6 0"/>
+          <path pathLength="1" d="M398 172V132"/>
+          <path pathLength="1" d="M398 136q-16-4-12-20q6-16 24-12q18 4 14 20q-4 16-26 12"/>
+          <path pathLength="1" d="M30 172q2-10 12-10q10 0 12 10"/>
+          <path pathLength="1" d="M70 34q5-6 10 0q5-6 10 0M104 24q4-5 8 0q4-5 8 0"/>
+        </svg>
 
         <div class="loader-horizon" aria-hidden="true">
           <div class="loader-horizon-fill" id="loadingBar"></div>

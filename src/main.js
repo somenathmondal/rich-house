@@ -1135,7 +1135,8 @@ function setupHotspots() {
       items.forEach((el) => el.classList.remove('active'));
       btn.classList.add('active');
       flyToTarget(pt.camPos, pt.lookAt);
-      track('view_navigate', { view_name: pt.name });
+      // Distinct GA event per view, e.g. view_stairs, view_default_view
+      track('view_' + pt.name.toLowerCase().replace(/\s+/g, '_'));
     });
     nav.appendChild(btn);
     items.push(btn);

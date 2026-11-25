@@ -19,7 +19,6 @@ import { SSAOPass } from 'three/examples/jsm/postprocessing/SSAOPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { SMAAPass } from 'three/examples/jsm/postprocessing/SMAAPass.js';
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
-import { Pane } from 'tweakpane';
 import { gsap } from 'gsap';
 import './style.css';
 
@@ -35,7 +34,8 @@ let clock = new THREE.Clock();
 let isPostProcessingEnabled = true; // SSAO + bloom + SMAA on by default
 
 // --- Post-processing ---
-let composer, ssaoPass, bloomPass;
+let composer, ssaoPass, bloomPass, smaaPass;
+let forceWaterReflection = true;
 
 // --- Pool water ---
 let poolSurfaceMesh = null; // baked tiled pool surface, replaced by Water shader
@@ -115,6 +115,8 @@ function updateSunFromAngles() {
     SUN_RADIUS * Math.cos(el) * Math.cos(az)
   );
   if (waterPlane) waterPlane.material.uniforms['sunDirection'].value.copy(sunLight.position).normalize();
+  if (renderer) renderer.shadowMap.needsUpdate = true;
+  forceWaterReflection = true;
   syncSunUI();
 }
 
@@ -302,12 +304,14 @@ function init() {
   // 2. Camera Setup
   camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
   camera.position.set(-26.6, 3.9, 33.0); // Default View (captured)
+  camera.layers.enable(1); // Main camera sees grass & birds on layer 1; Water reflection camera stays on layer 0
 
   // 3. Renderer Setup
   renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: "high-performance" });
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
   renderer.shadowMap.enabled = true;
+  renderer.shadowMap.autoUpdate = false; // Bake 4096x4096 shadows on demand (load + sun moves only)
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.1;
@@ -525,10 +529,21 @@ function setupPostProcessing() {
 
   // SSAO — grounds the building with contact ambient occlusion in the
   // crevices where volumes meet. Kept subtle so it darkens creases, not walls.
-  ssaoPass = new SSAOPass(scene, camera, w, h);
+  // Half-res SSAO + 16-tap kernel (SSAO is blurred anyway; ~4x faster GPU)
+  ssaoPass = new SSAOPass(scene, camera, Math.max(1, Math.floor(w / 2)), Math.max(1, Math.floor(h / 2)), 16);
   ssaoPass.kernelRadius = 8;
   ssaoPass.minDistance = 0.002;
   ssaoPass.maxDistance = 0.08;
+  // Skip 35k grass blades & overhead birds during SSAO normal/depth capture
+  const origSsaoRender = ssaoPass.render.bind(ssaoPass);
+  ssaoPass.render = (r, writeBuffer, readBuffer, deltaTime, maskActive) => {
+    const grass = window._grassMesh;
+    if (grass) grass.visible = false;
+    for (let i = 0; i < birdFlights.length; i++) birdFlights[i].obj.visible = false;
+    origSsaoRender(r, writeBuffer, readBuffer, deltaTime, maskActive);
+    if (grass) grass.visible = true;
+    for (let i = 0; i < birdFlights.length; i++) birdFlights[i].obj.visible = true;
+  };
   composer.addPass(ssaoPass);
 
   // Subtle bloom — only the brightest highlights (sun glints, sky) glow.
@@ -538,11 +553,10 @@ function setupPostProcessing() {
   // OutputPass applies tone mapping + output color space near the end.
   composer.addPass(new OutputPass());
 
-  // SMAA anti-aliasing — the composer bypasses the renderer's built-in MSAA,
-  // so without this the edges get jagged once post-processing is on. Runs
-  // last, on the final resolved image.
+  // SMAA anti-aliasing (stored so onWindowResize updates it properly)
   const pr = Math.min(window.devicePixelRatio, 1.5);
-  composer.addPass(new SMAAPass(w * pr, h * pr));
+  smaaPass = new SMAAPass(w * pr, h * pr);
+  composer.addPass(smaaPass);
 }
 
 // --- Load GLTF Models ---
@@ -554,6 +568,12 @@ function loadGLTFModels() {
   const dracoLoader = new DRACOLoader();
   dracoLoader.setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.5.7/');
   gltfLoader.setDRACOLoader(dracoLoader);
+
+  let pendingModels = 2;
+  const markModelLoaded = () => {
+    pendingModels--;
+    if (pendingModels <= 0) dracoLoader.dispose();
+  };
 
   // Load Seashore House
   gltfLoader.load('models/beach-house.glb', (gltf) => {
@@ -606,6 +626,8 @@ function loadGLTFModels() {
     });
 
     scene.add(houseMesh);
+    window.houseMesh = houseMesh;
+    renderer.shadowMap.needsUpdate = true;
     applyEnvToGlass(); // in case the EXR finished before the GLB
     console.warn(`[glass] GLB traversed; glass materials registered: ${glassMaterials.length}; envMap set: ${!!(glassSharedMat && glassSharedMat.envMap)}`);
     console.log("Seashore House GLTF Loaded!");
@@ -616,6 +638,7 @@ function loadGLTFModels() {
     // Scatter wind-swayed grass blades across the lawn (needs groundMesh)
     setupGrass();
     setLoadPart('house', 1);
+    markModelLoaded();
   }, bytesProgress('house'));
 
   // Load animated Seagull birds — small, high, and circling slowly so they
@@ -633,6 +656,7 @@ function loadGLTFModels() {
     flights.forEach((f, index) => {
       const birdClone = birdModel.clone();
       birdClone.scale.set(f.scale, f.scale, f.scale);
+      birdClone.traverse((o) => o.layers.set(1)); // Exclude overhead birds from Water planar reflection
       scene.add(birdClone);
       birdFlights.push({ obj: birdClone, ...f });
 
@@ -649,6 +673,7 @@ function loadGLTFModels() {
     });
     console.log("Birds loaded & animation clip bounds playing.");
     setLoadPart('bird', 1);
+    markModelLoaded();
   }, bytesProgress('bird'));
 }
 
@@ -717,8 +742,7 @@ function setupGrass() {
       roughness: 0.85,
       metalness: 0.0,
       side: THREE.DoubleSide,
-      transparent: true, // translucent Ghibli look
-      opacity: 0.85
+      transparent: false, // Opaque Early-Z avoids 35k-blade transparent overdraw while preserving wind/backlit shader
     });
 
     grassMat.onBeforeCompile = (shader) => {
@@ -1035,6 +1059,7 @@ function setupGrass() {
 
     const instancedGrass = new THREE.InstancedMesh(grassGeo, grassMat, GRASS_COUNT);
     instancedGrass.receiveShadow = true;
+    instancedGrass.layers.set(1); // Main camera renders grass; Water planar reflection skips 35k grass clumps
 
     const tPlace = performance.now();
     for (let i = 0; i < GRASS_COUNT; i++) {
@@ -1073,6 +1098,11 @@ function setupGrass() {
 
     grassGeo.setAttribute('aOrigin', new THREE.InstancedBufferAttribute(originArray, 2));
     grassGeo.setAttribute('aFacing', new THREE.InstancedBufferAttribute(facingArray, 2));
+
+    // Free one-time BVH acceleration trees now that grass placement is done
+    obstacles.forEach((o) => {
+      if (o.geometry && o.geometry.boundsTree) o.geometry.disposeBoundsTree();
+    });
 
     window._grassMaterial = grassMat;
     window._grassMesh = instancedGrass;
@@ -1132,9 +1162,9 @@ function setupWater() {
   waterPlane = new Water(
     waterGeometry,
     {
-      textureWidth: 512,
-      textureHeight: 512,
-      waterNormals: textureLoader.load('textures/water/Water_1_M_Normal.jpg', (texture) => {
+      textureWidth: 256,
+      textureHeight: 256,
+      waterNormals: textureLoader.load('textures/water/Water_1_M_Normal.webp', (texture) => {
         texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
       }),
       sunDirection: sunLight.position.clone().normalize(),
@@ -1144,6 +1174,34 @@ function setupWater() {
       fog: scene.fog !== undefined
     }
   );
+
+  // Throttle planar reflection re-render when idle / every 3rd moving frame (ripples still 60fps!)
+  const origWaterBeforeRender = waterPlane.onBeforeRender;
+  const lastWaterCamPos = new THREE.Vector3(Infinity, Infinity, Infinity);
+  const lastWaterCamQuat = new THREE.Quaternion();
+  let waterFrameCounter = 0;
+  let waterInitialFrames = 2;
+
+  waterPlane.onBeforeRender = function (r, s, cam) {
+    if (waterInitialFrames > 0 || forceWaterReflection) {
+      if (waterInitialFrames > 0) waterInitialFrames--;
+      forceWaterReflection = false;
+      lastWaterCamPos.copy(cam.position);
+      lastWaterCamQuat.copy(cam.quaternion);
+      origWaterBeforeRender.apply(this, arguments);
+      return;
+    }
+    const camMoved =
+      cam.position.distanceToSquared(lastWaterCamPos) > 1e-5 ||
+      1 - Math.abs(cam.quaternion.dot(lastWaterCamQuat)) > 1e-6;
+    if (!camMoved) return;
+    waterFrameCounter++;
+    if (waterFrameCounter % 3 === 0) {
+      lastWaterCamPos.copy(cam.position);
+      lastWaterCamQuat.copy(cam.quaternion);
+      origWaterBeforeRender.apply(this, arguments);
+    }
+  };
 
   waterPlane.rotation.x = - Math.PI / 2;
   waterPlane.position.copy(poolPosition);
@@ -1359,22 +1417,41 @@ function bindUIEvents() {
   }
 }
 
-// --- Tweakpane Debug Panel (live tuning) ---
-// Only mounts when the URL contains #debug (e.g. localhost:5174/#debug).
-function setupDebugPanel() {
-  if (!window.location.hash.includes('debug')) {
-    // React to the hash being added/removed without requiring a manual reload.
+// --- Tweakpane Debug Panel + Live Performance HUD (lazy-loaded behind #debug) ---
+let unmountDebugHud = null;
+async function setupDebugPanel() {
+  if (!window.location.hash.toLowerCase().includes('debug')) {
     window.addEventListener('hashchange', () => window.location.reload(), { once: true });
     return;
   }
   window.addEventListener('hashchange', () => window.location.reload(), { once: true });
 
+  // Mount live Performance Metrics HUD (bottom-left) in parallel with Tweakpane (top-left)
+  import('./debugHud.js').then(({ mountDebugHud }) => {
+    unmountDebugHud = mountDebugHud({
+      getStats: () => ({
+        geometries: renderer?.info.memory.geometries ?? 0,
+        textures: renderer?.info.memory.textures ?? 0,
+        postFx: isPostProcessingEnabled,
+        shadowAutoUpdate: renderer?.shadowMap.autoUpdate ?? false,
+      }),
+      onClose: () => {
+        window.history.replaceState(null, '', window.location.pathname + window.location.search);
+        unmountDebugHud?.();
+        unmountDebugHud = null;
+        document.getElementById('archviz-tweakpane-root')?.remove();
+      },
+    });
+  });
+
+  const { Pane } = await import('tweakpane');
   const container = document.createElement('div');
+  container.id = 'archviz-tweakpane-root';
   container.style.cssText =
     'position:fixed; top:70px; left:12px; width:280px; z-index:60;';
   document.body.appendChild(container);
 
-  const pane = new Pane({ container, title: 'Debug — Archviz' });
+  const pane = new Pane({ container, title: 'Debug — Archviz', expanded: false });
 
   // Wall / floor normal map
   const wall = { scale: 1.0, repeat: 20 };
@@ -1502,12 +1579,16 @@ function setupDebugPanel() {
 
 // --- Window Resize Handler ---
 function onWindowResize() {
-  camera.aspect = window.innerWidth / window.innerHeight;
+  const w = window.innerWidth;
+  const h = window.innerHeight;
+  const pr = Math.min(window.devicePixelRatio, 1.5);
+  camera.aspect = w / h;
   camera.updateProjectionMatrix();
-  renderer.setSize(window.innerWidth, window.innerHeight);
-  if (composer) composer.setSize(window.innerWidth, window.innerHeight);
-  if (ssaoPass) ssaoPass.setSize(window.innerWidth, window.innerHeight);
-  if (bloomPass) bloomPass.setSize(window.innerWidth, window.innerHeight);
+  renderer.setSize(w, h);
+  if (composer) composer.setSize(w, h);
+  if (ssaoPass) ssaoPass.setSize(Math.max(1, Math.floor(w / 2)), Math.max(1, Math.floor(h / 2)));
+  if (bloomPass) bloomPass.setSize(w, h);
+  if (smaaPass) smaaPass.setSize(w * pr, h * pr);
 }
 
 // --- Animation / Render Loop ---

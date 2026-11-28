@@ -2,7 +2,6 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
-import { EXRLoader } from 'three/examples/jsm/loaders/EXRLoader.js';
 import { Water } from 'three/examples/jsm/objects/Water.js';
 import { Lensflare, LensflareElement } from 'three/examples/jsm/objects/Lensflare.js';
 import { MeshSurfaceSampler } from 'three/examples/jsm/math/MeshSurfaceSampler.js';
@@ -74,6 +73,7 @@ function getGlassMaterial() {
     roughness: 0.05,
     transparent: true,
     opacity: 0.6,
+    depthWrite: false,      // Prevent foreground glazing from depth-culling glass seen through glass
     envMapIntensity: 1.8,
   });
   if (envTexture) glassSharedMat.envMap = envTexture;
@@ -153,36 +153,46 @@ function track(eventName, params = {}) {
 const loadingManager = new THREE.LoadingManager();
 const loaderBar = document.getElementById('loadingBar');
 const loaderText = document.getElementById('loaderText');
-const loaderSun = document.getElementById('loaderSun');
+const loaderSunTrack = document.getElementById('loaderSunTrack');
 const loaderPercent = document.getElementById('loaderPercent');
 const loaderOverlay = document.getElementById('loaderOverlay');
 const continueBtn = document.getElementById('btn-continue-explore');
 
 const loaderBlueprint = document.getElementById('loaderBlueprint');
+let lastLoaderPct = -1;
+
+// Pause hidden 3D scene rendering while the opaque loader doors cover the screen
+// so the 2D blueprint + sun animation gets 100% CPU/GPU headroom.
+let sceneRenderingEnabled = false;
+let sceneWarmedUp = false;
 
 // --- Smooth, byte-level load progress ---
-// LoadingManager only ticks when an asset FINISHES, so the big GLB parked
-// the bar at 0% for its whole download. Instead each heavy asset reports
-// byte progress, weighted by its real size, and the displayed value is
-// eased every frame in the render loop.
-const loadParts = { house: 0, env: 0, bird: 0, misc: 0 };
-const loadWeights = { house: 0.60, env: 0.25, bird: 0.10, misc: 0.05 };
-// Fallback totals (bytes) for when gzip hides Content-Length
+const loadParts = { house: 0, env: 0, bird: 0, grass: 0, misc: 0 };
+const loadWeights = { house: 0.50, env: 0.22, bird: 0.08, grass: 0.15, misc: 0.05 };
 const ASSET_BYTES = { house: 1436392, env: 1164572, bird: 258932 };
-let loadTarget = 0.12; // true weighted progress (0..1); starts at a 12%
-let loadShown = 0.12;  // floor so the bar never reads as stuck at zero
-let loaderDone = false;     // all assets in
-let loaderFinished = false; // reveal sequence started
+let loadTarget = 0.12;
+let loadShown = 0.12;
+let assetsDone = false;     // LoadingManager finished
+let grassDone = false;      // Time-sliced grass scatter finished
+let envDone = false;        // Time-sliced EXR sanitization finished
+let loaderDone = false;     // Everything ready to reveal
+let loaderFinished = false; // Reveal sequence started
+
+function checkAllLoadReady() {
+  if (assetsDone && grassDone && envDone && !loaderDone) {
+    console.warn(`[load] all assets + grass ready in ${(performance.now() / 1000).toFixed(2)}s`);
+    loaderDone = true;
+    loadTarget = 1;
+  }
+}
 
 function setLoadPart(key, frac) {
   loadParts[key] = Math.max(loadParts[key], Math.min(1, frac));
   let t = 0;
   for (const k in loadWeights) t += loadWeights[k] * loadParts[k];
-  // 0.12 floor + real progress scaled into the remaining 88%
   loadTarget = Math.max(loadTarget, Math.min(1, 0.12 + t * 0.88));
 }
 
-// Per-asset xhr progress callback for the three.js loaders
 function bytesProgress(key) {
   return (xhr) => {
     const total = (xhr.lengthComputable && xhr.total) ? xhr.total : ASSET_BYTES[key];
@@ -190,24 +200,30 @@ function bytesProgress(key) {
   };
 }
 
+// Pure GPU-composited loader UI updates (zero width/left layout thrash!)
 function updateLoaderUI(p) {
-  const pct = Math.round(p * 100);
-  if (loaderBar) loaderBar.style.width = `${pct}%`;
-  if (loaderSun) loaderSun.style.left = `${pct}%`;   // the sun rises along the horizon
-  if (loaderPercent) loaderPercent.textContent = pct;
-  if (loaderBlueprint) loaderBlueprint.style.setProperty('--draw', p); // villa sketches itself
+  const clamped = Math.max(0, Math.min(1, p));
+  if (loaderBar) loaderBar.style.transform = `scaleX(${clamped.toFixed(4)})`;
+  if (loaderSunTrack) {
+    loaderSunTrack.style.transform = `translate3d(${((clamped - 1) * 100).toFixed(3)}%, 0, 0)`;
+  }
+  if (loaderBlueprint) loaderBlueprint.style.setProperty('--draw', clamped.toFixed(4));
+
+  const pct = Math.round(clamped * 100);
+  if (pct !== lastLoaderPct) {
+    lastLoaderPct = pct;
+    if (loaderPercent) loaderPercent.textContent = pct;
+  }
 }
 
 loadingManager.onProgress = (url, itemsLoaded, itemsTotal) => {
-  // Small textures/decoder files roll up into the 5% "misc" share
   setLoadPart('misc', itemsLoaded / itemsTotal);
 };
 
 loadingManager.onLoad = () => {
-  // performance.now() is ms since navigation start = total time to all assets
-  console.warn(`[load] all assets loaded in ${(performance.now() / 1000).toFixed(2)}s`);
-  loaderDone = true;
-  loadTarget = 1; // let the eased display sweep to 100%
+  assetsDone = true;
+  if (!groundMesh) grassDone = true;
+  checkAllLoadReady();
 };
 
 // Fade out the loading overlay and reveal the scene. Used on auto-load and
@@ -258,6 +274,9 @@ function revealScene() {
       controls.enabled = true;
     }
   });
+
+  // Enable 3D rendering before parting the doors so the opening reveals a live warmed frame
+  sceneRenderingEnabled = true;
 
   // The ink panels part like the villa's sliding glass doors, opening
   // straight onto the Back View as the camera hold begins.
@@ -352,7 +371,7 @@ function init() {
   setupLights();
   setupEnvironment();
 
-  // 6b. Post-processing composer (SSAO + bloom), off until toggled
+  // 6b. Post-processing composer (SSAO + bloom + SMAA)
   setupPostProcessing();
 
   // 7. Load Models
@@ -422,6 +441,7 @@ function setupLights() {
 // Recipe matched to the reference: a huge warm atmospheric glow on the sun
 // plus large chromatic rainbow ghosts marching along the axis past screen
 // centre (distance 1.0 = centre, >1 continues to the opposite quadrant).
+let sunLensflare = null;
 let flareGlow = null;
 let flareGhosts = [];
 
@@ -445,12 +465,32 @@ function makeGlowTexture() {
 }
 
 function setupLensflare() {
+  // Three.js Lensflare assumes [0,1] LDR occlusionMap samples; inside EffectComposer's
+  // HalfFloat HDR render target, bright EXR/glass pixels (g > 1.0) make (1 - g) strongly
+  // negative, turning AdditiveBlending into giant pitch-black quads when the sun passes
+  // behind glass (e.g. flying into Main Bedroom). Clamp every occlusion sample & vVisibility
+  // to [0,1] using min(max(...)) so NaN and HDR > 1 values never go negative.
+  if (!LensflareElement.Shader._hdrSafe) {
+    LensflareElement.Shader._hdrSafe = true;
+    LensflareElement.Shader.vertexShader = LensflareElement.Shader.vertexShader
+      .replace(
+        /texture2D\(\s*occlusionMap\s*,\s*(vec2\([^)]+\))\s*\)/g,
+        'min( max( texture2D( occlusionMap, $1 ), 0.0 ), 1.0 )'
+      )
+      .replace(
+        'gl_Position = vec4(',
+        'vVisibility = min( max( vVisibility, 0.0 ), 1.0 );\n\t\t\tgl_Position = vec4('
+      );
+  }
+
   const loader = new THREE.TextureLoader(loadingManager);
   const glowTex = makeGlowTexture();                         // soft warm glow
   const ringTex = loader.load('textures/lensflare3.jpg');   // rainbow halo ring
   const burstTex = loader.load('textures/lensflare22.jpeg'); // chromatic arc pair
 
   const lensflare = new Lensflare();
+  lensflare.layers.set(1); // Main camera sees flare; Water layer-0 planar reflection skips it
+  sunLensflare = lensflare;
 
   // Big golden glow sitting on the sun itself — deep amber and oversized so
   // it reads as atmospheric sunset haze, not a pale disc.
@@ -477,41 +517,76 @@ function setupLensflare() {
 
 // --- Setup Environment Map (EXR) ---
 function setupEnvironment() {
-  const exrLoader = new EXRLoader(loadingManager);
-  // Request Float32 data so we can sanitize the pixel values below.
-  exrLoader.setDataType(THREE.FloatType);
-
-  exrLoader.load('textures/spruit_sunrise_1K.exr', (texture) => {
-    // Sanitize: HDR sun texels with Inf/NaN (or absurd radiance) poison the
-    // IBL convolution and turn every lit surface black. Clamp them.
-    const data = texture.image && texture.image.data;
-    if (data && data.length) {
-      const MAX = 64;
-      let bad = 0, hot = 0, peak = 0;
-      for (let i = 0; i < data.length; i++) {
-        const v = data[i];
-        if (!Number.isFinite(v)) { data[i] = MAX; bad++; }
-        else if (v > MAX) { data[i] = MAX; hot++; if (v > peak) peak = v; }
-        else if (v > peak) peak = v;
-      }
-      texture.needsUpdate = true;
-      console.warn(`[env] EXR sanitized — non-finite: ${bad}, clamped>${MAX}: ${hot}, peak seen: ${peak.toFixed(1)}`);
-    }
-
+  const finishEnv = (texture, bad, hot, peak) => {
+    texture.needsUpdate = true;
     texture.mapping = THREE.EquirectangularReflectionMapping;
     scene.background = texture;
-
-    // Use the equirect EXR directly as the environment — three.js converts
-    // it internally (no manual PMREM, which was producing a corrupted env
-    // texture and blacking out every surface that sampled it).
     envTexture = texture;
     scene.environment = envTexture;
     scene.environmentIntensity = 0.5;
     applyEnvToGlass();
-
-    console.warn(`[glass] envTexture ready; glass materials registered: ${glassMaterials.length}`);
-    console.log("EXR Environment loaded as background successfully!");
+    console.warn(`[env] EXR sanitized — non-finite: ${bad}, clamped>64: ${hot}, peak seen: ${peak.toFixed(1)}`);
     setLoadPart('env', 1);
+    envDone = true;
+    checkAllLoadReady();
+  };
+
+  const loadFallback = async () => {
+    const { EXRLoader } = await import('three/examples/jsm/loaders/EXRLoader.js');
+    const exrLoader = new EXRLoader(loadingManager);
+    exrLoader.setDataType(THREE.FloatType);
+    exrLoader.load('textures/spruit_sunrise_1K.exr', (texture) => {
+      const data = texture.image && texture.image.data;
+      const MAX = 64;
+      let bad = 0, hot = 0, peak = 0;
+      if (data && data.length) {
+        for (let i = 0; i < data.length; i++) {
+          const v = data[i];
+          if (!Number.isFinite(v)) { data[i] = MAX; bad++; }
+          else if (v > MAX) { data[i] = MAX; hot++; if (v > peak) peak = v; }
+          else if (v > peak) peak = v;
+        }
+      }
+      finishEnv(texture, bad, hot, peak);
+    }, bytesProgress('env'));
+  };
+
+  if (typeof Worker === 'undefined') {
+    loadFallback();
+    return;
+  }
+
+  // Download via FileLoader (tracked by loadingManager + byte progress), then
+  // decompress & sanitize off the main thread in a dedicated Web Worker.
+  const fileLoader = new THREE.FileLoader(loadingManager);
+  fileLoader.setResponseType('arraybuffer');
+  fileLoader.load('textures/spruit_sunrise_1K.exr', (buffer) => {
+    try {
+      const worker = new Worker(new URL('./exrWorker.js', import.meta.url), { type: 'module' });
+      worker.onmessage = (ev) => {
+        worker.terminate();
+        const msg = ev.data;
+        if (msg.error) {
+          console.warn('[env] EXR worker failed, falling back:', msg.error);
+          loadFallback();
+          return;
+        }
+        const tex = new THREE.DataTexture(msg.data, msg.width, msg.height, msg.format, msg.type);
+        tex.colorSpace = msg.colorSpace;
+        tex.minFilter = THREE.LinearFilter;
+        tex.magFilter = THREE.LinearFilter;
+        tex.generateMipmaps = false;
+        tex.flipY = false;
+        finishEnv(tex, msg.bad, msg.hot, msg.peak);
+      };
+      worker.onerror = () => {
+        worker.terminate();
+        loadFallback();
+      };
+      worker.postMessage({ buffer }, [buffer]);
+    } catch {
+      loadFallback();
+    }
   }, bytesProgress('env'));
 }
 
@@ -534,14 +609,17 @@ function setupPostProcessing() {
   ssaoPass.kernelRadius = 8;
   ssaoPass.minDistance = 0.002;
   ssaoPass.maxDistance = 0.08;
-  // Skip 35k grass blades & overhead birds during SSAO normal/depth capture
+  // Skip 35k grass blades, overhead birds & sun lensflare during SSAO normal/depth capture
+  // (Lensflare.onBeforeRender would otherwise draw additive quads into the SSAO normal buffer!)
   const origSsaoRender = ssaoPass.render.bind(ssaoPass);
   ssaoPass.render = (r, writeBuffer, readBuffer, deltaTime, maskActive) => {
     const grass = window._grassMesh;
     if (grass) grass.visible = false;
+    if (sunLensflare) sunLensflare.visible = false;
     for (let i = 0; i < birdFlights.length; i++) birdFlights[i].obj.visible = false;
     origSsaoRender(r, writeBuffer, readBuffer, deltaTime, maskActive);
     if (grass) grass.visible = true;
+    if (sunLensflare) sunLensflare.visible = true;
     for (let i = 0; i < birdFlights.length; i++) birdFlights[i].obj.visible = true;
   };
   composer.addPass(ssaoPass);
@@ -629,16 +707,16 @@ function loadGLTFModels() {
     window.houseMesh = houseMesh;
     renderer.shadowMap.needsUpdate = true;
     applyEnvToGlass(); // in case the EXR finished before the GLB
-    console.warn(`[glass] GLB traversed; glass materials registered: ${glassMaterials.length}; envMap set: ${!!(glassSharedMat && glassSharedMat.envMap)}`);
-    console.log("Seashore House GLTF Loaded!");
-    
-    // Setup water plane after house model loads (aligning to pool location)
-    setupWater();
-
-    // Scatter wind-swayed grass blades across the lawn (needs groundMesh)
-    setupGrass();
     setLoadPart('house', 1);
     markModelLoaded();
+
+    // Yield a frame after GLB parse/add so setupWater & setupGrass never stack onto the same frame
+    requestAnimationFrame(() => {
+      setupWater();
+      requestAnimationFrame(() => {
+        setupGrass();
+      });
+    });
   }, bytesProgress('house'));
 
   // Load animated Seagull birds — small, high, and circling slowly so they
@@ -989,23 +1067,16 @@ function setupGrass() {
     // keeps 35k-sample placement fast instead of blocking the loader.
     const obstacleBoxes = obstacles.map((o) => new THREE.Box3().setFromObject(o));
 
-    // Build BVHs so each coverage ray is a log-time lookup (one-time cost).
-    const tBvh = performance.now();
-    obstacles.forEach((o) => {
-      if (o.geometry && !o.geometry.boundsTree) o.geometry.computeBoundsTree();
-    });
-    console.warn(`[grass] BVH build: ${(performance.now() - tBvh).toFixed(0)}ms for ${obstacles.length} obstacles`);
+    // Build BVHs & scatter 35k grass blades in ~5ms time-sliced rAF chunks
+    // so the 2D blueprint loader stays locked at 60fps with zero main-thread freezes!
+    const tPlace = performance.now();
+    let bvhIdx = 0;
+    let bladeIdx = 0;
 
-    // The pool-rim wall top is a thin strip at water height along the water's
-    // bounding-box edge (where the stairs meet the pool) — blades there read
-    // as growing out of the coping. Cull a narrow band around that edge, at
-    // water height only, so lawns above/below the pool level are untouched.
     const waterBox = waterPlane ? new THREE.Box3().setFromObject(waterPlane) : null;
     const RIM = 1.2;
     function onPoolRim(pos) {
       if (!waterBox) return false;
-      // Pool-level band: from deep enough that a tall blade could still poke
-      // above the water (~1.8 below) up to just above the coping.
       if (pos.y < waterBox.max.y - 1.8 || pos.y > waterBox.max.y + 1.0) return false;
       const inOuter =
         pos.x > waterBox.min.x - RIM && pos.x < waterBox.max.x + RIM &&
@@ -1013,7 +1084,7 @@ function setupGrass() {
       const inInner =
         pos.x > waterBox.min.x + RIM && pos.x < waterBox.max.x - RIM &&
         pos.z > waterBox.min.z + RIM && pos.z < waterBox.max.z - RIM;
-      return inOuter && !inInner; // in the edge band only
+      return inOuter && !inInner;
     }
 
     const upRay = new THREE.Raycaster();
@@ -1022,7 +1093,6 @@ function setupGrass() {
     const rayOrigin = new THREE.Vector3();
     const candidates = [];
     function isCovered(pos) {
-      // Water first — pure math, no ray: under the water rectangle = covered.
       if (waterBox &&
           pos.y < waterBox.max.y &&
           pos.x > waterBox.min.x && pos.x < waterBox.max.x &&
@@ -1030,7 +1100,6 @@ function setupGrass() {
         return true;
       }
 
-      // Only raycast obstacles whose bounding box contains this point.
       candidates.length = 0;
       for (let k = 0; k < obstacles.length; k++) {
         const b = obstacleBoxes[k];
@@ -1061,55 +1130,87 @@ function setupGrass() {
     instancedGrass.receiveShadow = true;
     instancedGrass.layers.set(1); // Main camera renders grass; Water planar reflection skips 35k grass clumps
 
-    const tPlace = performance.now();
-    for (let i = 0; i < GRASS_COUNT; i++) {
-      // Resample if the point is hidden under a walkway tile (bounded tries)
-      let tries = 0;
-      do {
-        sampler.sample(samplePos);
-        samplePos.applyMatrix4(groundMesh.matrixWorld); // local → world
-      } while ((isCovered(samplePos) || onPoolRim(samplePos)) && ++tries < 8);
-      if (tries >= 8) { // give up on this blade — collapse it to nothing
-        dummy.position.set(0, -100, 0);
-        dummy.scale.setScalar(0.0001);
-        dummy.updateMatrix();
-        instancedGrass.setMatrixAt(i, dummy.matrix);
-        continue;
+    const stepGrassBuild = () => {
+      const sliceStart = performance.now();
+
+      // Phase 1: build obstacle BVHs incrementally
+      while (bvhIdx < obstacles.length) {
+        const o = obstacles[bvhIdx++];
+        if (o.geometry && !o.geometry.boundsTree) o.geometry.computeBoundsTree();
+        if (performance.now() - sliceStart > 5.0) {
+          setLoadPart('grass', 0.15 * (bvhIdx / Math.max(1, obstacles.length)));
+          requestAnimationFrame(stepGrassBuild);
+          return;
+        }
       }
 
-      dummy.position.copy(samplePos);
+      // Phase 2: scatter grass blades in ~5ms chunks
+      while (bladeIdx < GRASS_COUNT) {
+        const batchEnd = Math.min(GRASS_COUNT, bladeIdx + 400);
+        for (; bladeIdx < batchEnd; bladeIdx++) {
+          let tries = 0;
+          do {
+            sampler.sample(samplePos);
+            samplePos.applyMatrix4(groundMesh.matrixWorld);
+          } while ((isCovered(samplePos) || onPoolRim(samplePos)) && ++tries < 8);
+          if (tries >= 8) {
+            dummy.position.set(0, -100, 0);
+            dummy.scale.setScalar(0.0001);
+            dummy.updateMatrix();
+            instancedGrass.setMatrixAt(bladeIdx, dummy.matrix);
+            continue;
+          }
 
-      const angleY = seededRandom() * Math.PI * 2;
-      const bendX = (seededRandom() - 0.5) * 0.1;
-      const bendZ = (seededRandom() - 0.5) * 0.1;
-      dummy.rotation.set(bendX, angleY, bendZ);
+          dummy.position.copy(samplePos);
 
-      const w = (0.8 + seededRandom() * 0.4) * BLADE_SCALE;
-      const h = (0.8 + seededRandom() * 0.5) * BLADE_SCALE;
-      dummy.scale.set(w, h, w);
-      dummy.updateMatrix();
-      instancedGrass.setMatrixAt(i, dummy.matrix);
+          const angleY = seededRandom() * Math.PI * 2;
+          const bendX = (seededRandom() - 0.5) * 0.1;
+          const bendZ = (seededRandom() - 0.5) * 0.1;
+          dummy.rotation.set(bendX, angleY, bendZ);
 
-      originArray[i * 2 + 0] = samplePos.x;
-      originArray[i * 2 + 1] = samplePos.z;
-      facingArray[i * 2 + 0] = Math.cos(angleY);
-      facingArray[i * 2 + 1] = Math.sin(angleY);
-    }
+          const w = (0.8 + seededRandom() * 0.4) * BLADE_SCALE;
+          const h = (0.8 + seededRandom() * 0.5) * BLADE_SCALE;
+          dummy.scale.set(w, h, w);
+          dummy.updateMatrix();
+          instancedGrass.setMatrixAt(bladeIdx, dummy.matrix);
 
-    grassGeo.setAttribute('aOrigin', new THREE.InstancedBufferAttribute(originArray, 2));
-    grassGeo.setAttribute('aFacing', new THREE.InstancedBufferAttribute(facingArray, 2));
+          originArray[bladeIdx * 2 + 0] = samplePos.x;
+          originArray[bladeIdx * 2 + 1] = samplePos.z;
+          facingArray[bladeIdx * 2 + 0] = Math.cos(angleY);
+          facingArray[bladeIdx * 2 + 1] = Math.sin(angleY);
+        }
+        if (performance.now() - sliceStart > 5.0) break;
+      }
 
-    // Free one-time BVH acceleration trees now that grass placement is done
-    obstacles.forEach((o) => {
-      if (o.geometry && o.geometry.boundsTree) o.geometry.disposeBoundsTree();
-    });
+      if (bladeIdx < GRASS_COUNT) {
+        setLoadPart('grass', 0.15 + 0.85 * (bladeIdx / GRASS_COUNT));
+        requestAnimationFrame(stepGrassBuild);
+        return;
+      }
 
-    window._grassMaterial = grassMat;
-    window._grassMesh = instancedGrass;
-    scene.add(instancedGrass);
-    console.warn(`[grass] ${GRASS_COUNT} blades scattered in ${(performance.now() - tPlace).toFixed(0)}ms (blade height ${bladeHeight.toFixed(2)})`);
+      instancedGrass.instanceMatrix.needsUpdate = true;
+      grassGeo.setAttribute('aOrigin', new THREE.InstancedBufferAttribute(originArray, 2));
+      grassGeo.setAttribute('aFacing', new THREE.InstancedBufferAttribute(facingArray, 2));
+
+      // Free one-time BVH acceleration trees now that grass placement is done
+      obstacles.forEach((o) => {
+        if (o.geometry && o.geometry.boundsTree) o.geometry.disposeBoundsTree();
+      });
+
+      window._grassMaterial = grassMat;
+      window._grassMesh = instancedGrass;
+      scene.add(instancedGrass);
+      setLoadPart('grass', 1);
+      grassDone = true;
+      checkAllLoadReady();
+      console.warn(`[grass] ${GRASS_COUNT} blades scattered (time-sliced) in ${(performance.now() - tPlace).toFixed(0)}ms`);
+    };
+
+    requestAnimationFrame(stepGrassBuild);
   }, undefined, (err) => {
     console.error('[grass] blade GLB load FAILED:', err);
+    grassDone = true;
+    checkAllLoadReady();
   });
 }
 
@@ -1595,20 +1696,64 @@ function onWindowResize() {
 function animate() {
   requestAnimationFrame(animate);
 
-  const delta = clock.getDelta();
+  // Clamp delta so brief async asset parses never cause visible jumps in the 2D loader
+  const delta = Math.min(clock.getDelta(), 0.05);
 
-  // 0. Glide the loading UI toward the true progress (byte-weighted)
+  // 0. Glide the loading UI toward the true progress (pure GPU transforms)
   if (!loaderFinished) {
-    loadShown += (loadTarget - loadShown) * Math.min(1, delta * (loaderDone ? 4.0 : 2.5));
+    loadShown += (loadTarget - loadShown) * Math.min(1, delta * (loaderDone ? 5.0 : 3.2));
     if (loaderDone && loadShown > 0.995) loadShown = 1;
     updateLoaderUI(loadShown);
     if (loadShown >= 1) {
       loaderFinished = true;
       if (loaderText) loaderText.innerText = 'Ready';
       if (loaderOverlay) loaderOverlay.classList.add('complete'); // sketch turns gold
-      setTimeout(revealScene, 800); // beat on the gold sketch, then reveal
+
+      // Pre-compile shaders asynchronously and warm the composer ONCE during the
+      // static gold-sketch beat, then wait 2 clean rAFs so the sliding glass doors
+      // open on a spotless 60fps frame with zero stall!
+      const nextFrame = () => new Promise((r) => requestAnimationFrame(r));
+      const goldStart = performance.now();
+      const warmAndReveal = async () => {
+        if (!sceneWarmedUp) {
+          sceneWarmedUp = true;
+
+          // Step 1: Parallel off-thread shader compilation (KHR_parallel_shader_compile)
+          await nextFrame();
+          try {
+            if (typeof renderer.compileAsync === 'function') {
+              await renderer.compileAsync(scene, camera);
+            }
+          } catch {}
+
+          // Step 2: Single composer warm-up frame (bakes 4096 shadows + water reflection + SSAO)
+          await nextFrame();
+          renderer.shadowMap.needsUpdate = true;
+          forceWaterReflection = true;
+          if (isPostProcessingEnabled && composer) {
+            composer.render();
+          } else {
+            renderer.render(scene, camera);
+          }
+          renderer.shadowMap.needsUpdate = false;
+        }
+
+        // Preserve the brief golden-blueprint beat before parting the doors
+        const remaining = Math.max(0, 450 - (performance.now() - goldStart));
+        if (remaining > 0) await new Promise((r) => setTimeout(r, remaining));
+
+        // Let GPU queue drain & rAF cadence settle before starting the CSS door slide transition
+        await nextFrame();
+        await nextFrame();
+        revealScene();
+      };
+
+      warmAndReveal();
     }
   }
+
+  // Skip hidden 3D scene rendering while opaque loader doors are still closed
+  if (!sceneRenderingEnabled) return;
 
   // 1. Update controls (skipped while the intro animation owns the camera —
   // controls.update() would force lookAt(controls.target) every frame)
